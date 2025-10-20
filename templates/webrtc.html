@@ -1,0 +1,253 @@
+{% extends "layout.html" %}
+
+{% block title %}WebRTC Stream - {{ device_id }}{% endblock %}
+
+{% block head %}
+<style>
+    .video-container {
+        position: relative;
+        width: 100%;
+        height: 70vh;
+        background-color: #222;
+        border-radius: 5px;
+        overflow: hidden;
+    }
+    .video-container video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .controls {
+        margin-top: 10px;
+    }
+    .status-indicator {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        padding: 5px 10px;
+        border-radius: 5px;
+        background-color: rgba(0, 0, 0, 0.5);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2>Stream từ {{ device_id }}</h2>
+                <a href="/dashboard" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left me-2"></i>Quay lại Dashboard
+                </a>
+            </div>
+            
+            <div class="card bg-dark text-light border-secondary">
+                <div class="card-body">
+                    <div class="video-container">
+                        <video id="videoStream" autoplay playsinline></video>
+                        <div class="status-indicator">
+                            <span class="badge bg-warning" id="streamStatus">Đang kết nối...</span>
+                        </div>
+                    </div>
+                    
+                    <div class="controls d-flex justify-content-between mt-3">
+                        <div>
+                            <button id="startStream" class="btn btn-primary">
+                                <i class="fas fa-play me-1"></i>Bắt đầu
+                            </button>
+                            <button id="stopStream" class="btn btn-danger">
+                                <i class="fas fa-stop me-1"></i>Dừng
+                            </button>
+                        </div>
+                        <div>
+                            <span class="badge bg-info" id="connectionInfo">WebRTC</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card bg-dark text-light border-secondary mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Thông tin thiết bị</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <strong>ID thiết bị:</strong>
+                                <span id="deviceIdDisplay">{{ device_id }}</span>
+                            </div>
+                            <div class="mb-3">
+                                <strong>Trạng thái kết nối:</strong>
+                                <span id="connectionState">Chưa kết nối</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <strong>Độ trễ:</strong>
+                                <span id="latency">--</span>
+                            </div>
+                            <div class="mb-3">
+                                <strong>Chất lượng:</strong>
+                                <span id="quality">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Khởi tạo kết nối Socket.IO
+    const socket = io();
+    const deviceId = "{{ device_id }}";
+    
+    // Các phần tử DOM
+    const videoElement = document.getElementById('videoStream');
+    const startStreamButton = document.getElementById('startStream');
+    const stopStreamButton = document.getElementById('stopStream');
+    const streamStatus = document.getElementById('streamStatus');
+    const connectionState = document.getElementById('connectionState');
+    const latencyDisplay = document.getElementById('latency');
+    
+    let peerConnection;
+    let startTime;
+    
+    // Khởi tạo kết nối WebRTC
+    async function startWebRTC() {
+        try {
+            streamStatus.textContent = 'Đang kết nối...';
+            streamStatus.className = 'badge bg-warning';
+            connectionState.textContent = 'Đang thiết lập kết nối';
+            
+            // Ghi lại thời gian bắt đầu để tính độ trễ
+            startTime = Date.now();
+            
+            // Tạo peer connection
+            const configuration = {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' }
+                ]
+            };
+            
+            peerConnection = new RTCPeerConnection(configuration);
+            
+            // Xử lý khi trạng thái kết nối thay đổi
+            peerConnection.onconnectionstatechange = () => {
+                connectionState.textContent = peerConnection.connectionState;
+                
+                if (peerConnection.connectionState === 'connected') {
+                    // Tính độ trễ
+                    const latency = Date.now() - startTime;
+                    latencyDisplay.textContent = `${latency}ms`;
+                    
+                    // Cập nhật trạng thái
+                    streamStatus.textContent = 'Đang phát';
+                    streamStatus.className = 'badge bg-success';
+                } else if (peerConnection.connectionState === 'failed' || 
+                           peerConnection.connectionState === 'disconnected' ||
+                           peerConnection.connectionState === 'closed') {
+                    streamStatus.textContent = 'Ngắt kết nối';
+                    streamStatus.className = 'badge bg-danger';
+                }
+            };
+            
+            // Xử lý khi nhận được ICE candidate
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.emit('webrtc_ice_candidate', {
+                        device_id: deviceId,
+                        candidate: event.candidate
+                    });
+                }
+            };
+            
+            // Xử lý khi nhận được track
+            peerConnection.ontrack = event => {
+                videoElement.srcObject = event.streams[0];
+                
+                // Đánh giá chất lượng video
+                const videoTrack = event.streams[0].getVideoTracks()[0];
+                if (videoTrack) {
+                    const settings = videoTrack.getSettings();
+                    document.getElementById('quality').textContent = 
+                        `${settings.width}x${settings.height} @ ${settings.frameRate || '--'}fps`;
+                }
+            };
+            
+            // Tạo offer
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            
+            // Gửi offer đến server
+            socket.emit('webrtc_offer', {
+                device_id: deviceId,
+                sdp: peerConnection.localDescription.sdp,
+                type: peerConnection.localDescription.type
+            });
+        } catch (error) {
+            console.error('Lỗi khi khởi tạo WebRTC:', error);
+            streamStatus.textContent = 'Lỗi kết nối';
+            streamStatus.className = 'badge bg-danger';
+            connectionState.textContent = 'Lỗi: ' + error.message;
+        }
+    }
+    
+    // Xử lý khi nhận được answer từ server
+    socket.on('webrtc_answer', async function(data) {
+        if (!peerConnection || data.device_id !== deviceId) return;
+        
+        try {
+            const remoteDesc = new RTCSessionDescription({
+                sdp: data.sdp,
+                type: data.type
+            });
+            
+            await peerConnection.setRemoteDescription(remoteDesc);
+        } catch (error) {
+            console.error('Lỗi khi xử lý answer:', error);
+        }
+    });
+    
+    // Xử lý khi nhận được ICE candidate từ server
+    socket.on('webrtc_ice_candidate', async function(data) {
+        if (!peerConnection || data.device_id !== deviceId) return;
+        
+        try {
+            await peerConnection.addIceCandidate(data.candidate);
+        } catch (error) {
+            console.error('Lỗi khi xử lý ICE candidate:', error);
+        }
+    });
+    
+    // Sự kiện khi nhấn nút bắt đầu stream
+    startStreamButton.addEventListener('click', function() {
+        startWebRTC();
+    });
+    
+    // Sự kiện khi nhấn nút dừng stream
+    stopStreamButton.addEventListener('click', function() {
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+        }
+        
+        videoElement.srcObject = null;
+        streamStatus.textContent = 'Đã dừng';
+        streamStatus.className = 'badge bg-secondary';
+        connectionState.textContent = 'Ngắt kết nối';
+        latencyDisplay.textContent = '--';
+        document.getElementById('quality').textContent = '--';
+    });
+    
+    // Tự động bắt đầu stream khi trang được tải
+    window.addEventListener('load', function() {
+        startWebRTC();
+    });
+</script>
+{% endblock %}

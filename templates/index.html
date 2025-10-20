@@ -1,0 +1,39 @@
+{% extends "layout.html" %}
+
+{% block title %}Trang chủ{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-8 text-center">
+            <h1 class="display-4 mb-4">Hệ thống giám sát Sky WebApp</h1>
+            <p class="lead">Hệ thống giám sát video và GPS real-time cho drone và phao cứu hộ</p>
+            
+            <div class="mt-5">
+                <a href="/dashboard" class="btn btn-primary btn-lg px-4 me-md-2">
+                    <i class="fas fa-tachometer-alt me-2"></i>Truy cập Dashboard
+                </a>
+            </div>
+            
+            <div class="row mt-5">
+                <div class="col-md-6">
+                    <div class="card bg-dark text-light border-secondary mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title"><i class="fas fa-video me-2"></i>Video Streaming</h5>
+                            <p class="card-text">Xem video trực tiếp từ drone thông qua Raspberry Pi với độ trễ thấp</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card bg-dark text-light border-secondary mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title"><i class="fas fa-map-marker-alt me-2"></i>Theo dõi GPS</h5>
+                            <p class="card-text">Theo dõi vị trí GPS real-time của drone và phao cứu hộ</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

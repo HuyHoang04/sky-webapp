@@ -1,0 +1,371 @@
+{% extends "layout.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
+<style>
+    #map {
+        height: 400px;
+        width: 100%;
+        border-radius: 5px;
+    }
+    .video-container {
+        position: relative;
+        width: 100%;
+        height: 400px;
+        background-color: #222;
+        border-radius: 5px;
+        overflow: hidden;
+    }
+    .video-container video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .device-status {
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 10px;
+    }
+    .device-online {
+        background-color: rgba(40, 167, 69, 0.2);
+        border: 1px solid #28a745;
+    }
+    .device-offline {
+        background-color: rgba(220, 53, 69, 0.2);
+        border: 1px solid #dc3545;
+    }
+    .data-card {
+        background-color: #2c3034;
+        border: 1px solid #495057;
+        border-radius: 5px;
+    }
+    .controls {
+        margin-top: 10px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1 class="mb-4">Dashboard Giám sát</h1>
+    
+    <div class="row">
+        <!-- Video Stream Panel -->
+        <div class="col-lg-8 mb-4">
+            <div class="card bg-dark text-light border-secondary h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-video me-2"></i>Video Stream</h5>
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="videoSourceDropdown" data-bs-toggle="dropdown">
+                            Chọn nguồn
+                        </button>
+                        <ul class="dropdown-menu" id="videoSourceList">
+                            <li><a class="dropdown-item" href="#" data-device-id="drone1">Drone 1</a></li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="video-container">
+                        <video id="videoStream" autoplay playsinline></video>
+                    </div>
+                    <div class="controls d-flex justify-content-between mt-3">
+                        <div>
+                            <button id="startStream" class="btn btn-primary btn-sm">
+                                <i class="fas fa-play me-1"></i>Bắt đầu
+                            </button>
+                            <button id="stopStream" class="btn btn-danger btn-sm">
+                                <i class="fas fa-stop me-1"></i>Dừng
+                            </button>
+                        </div>
+                        <div>
+                            <span class="badge bg-success" id="streamStatus">Sẵn sàng</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- GPS Map Panel -->
+        <div class="col-lg-4 mb-4">
+            <div class="card bg-dark text-light border-secondary h-100">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-map-marker-alt me-2"></i>Bản đồ GPS</h5>
+                </div>
+                <div class="card-body">
+                    <div id="map"></div>
+                    <div class="mt-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="showDrone" checked>
+                            <label class="form-check-label" for="showDrone">Hiển thị Drone</label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="showLifebuoy" checked>
+                            <label class="form-check-label" for="showLifebuoy">Hiển thị Phao cứu hộ</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Device Status Panel -->
+        <div class="col-lg-4 mb-4">
+            <div class="card bg-dark text-light border-secondary">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-server me-2"></i>Trạng thái thiết bị</h5>
+                </div>
+                <div class="card-body">
+                    <div id="deviceStatusList">
+                        <div class="device-status device-online">
+                            <h6>Drone 1</h6>
+                            <div class="d-flex justify-content-between">
+                                <span>Trạng thái:</span>
+                                <span class="text-success">Online</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>Kết nối:</span>
+                                <span>WebRTC</span>
+                            </div>
+                        </div>
+                        <div class="device-status device-offline">
+                            <h6>Phao cứu hộ 1</h6>
+                            <div class="d-flex justify-content-between">
+                                <span>Trạng thái:</span>
+                                <span class="text-danger">Offline</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>Kết nối:</span>
+                                <span>WebSocket</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- GPS Data Panel -->
+        <div class="col-lg-8 mb-4">
+            <div class="card bg-dark text-light border-secondary">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-satellite me-2"></i>Dữ liệu GPS</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-dark table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Thiết bị</th>
+                                    <th>Vĩ độ</th>
+                                    <th>Kinh độ</th>
+                                    <th>Độ cao</th>
+                                    <th>Tốc độ</th>
+                                    <th>Cập nhật lúc</th>
+                                </tr>
+                            </thead>
+                            <tbody id="gpsDataTable">
+                                <tr>
+                                    <td>Drone 1</td>
+                                    <td id="drone1-lat">21.0285</td>
+                                    <td id="drone1-lng">105.8542</td>
+                                    <td id="drone1-alt">25m</td>
+                                    <td id="drone1-speed">15 km/h</td>
+                                    <td id="drone1-time">12:30:45</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Khởi tạo kết nối Socket.IO
+    const socket = io();
+    
+    // Khởi tạo bản đồ
+    let map = L.map('map').setView([21.0285, 105.8542], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+    
+    // Markers cho các thiết bị
+    const markers = {};
+    
+    // Khởi tạo marker cho drone
+    markers.drone1 = L.marker([21.0285, 105.8542], {
+        icon: L.divIcon({
+            className: 'custom-div-icon',
+            html: '<div style="background-color: #007bff; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white;"></div>',
+            iconSize: [15, 15],
+            iconAnchor: [7, 7]
+        })
+    }).addTo(map).bindPopup('Drone 1');
+    
+    // Xử lý khi nhận dữ liệu GPS mới
+    socket.on('gps_update', function(data) {
+        console.log('Nhận dữ liệu GPS:', data);
+        
+        // Cập nhật bảng dữ liệu
+        const deviceId = data.device_id;
+        const timestamp = new Date(data.timestamp).toLocaleTimeString();
+        
+        // Cập nhật bảng
+        document.getElementById(`${deviceId}-lat`).textContent = data.latitude.toFixed(6);
+        document.getElementById(`${deviceId}-lng`).textContent = data.longitude.toFixed(6);
+        document.getElementById(`${deviceId}-alt`).textContent = `${data.altitude}m`;
+        document.getElementById(`${deviceId}-speed`).textContent = `${data.speed} km/h`;
+        document.getElementById(`${deviceId}-time`).textContent = timestamp;
+        
+        // Cập nhật marker trên bản đồ
+        if (markers[deviceId]) {
+            markers[deviceId].setLatLng([data.latitude, data.longitude]);
+            markers[deviceId].getPopup().setContent(`${deviceId}<br>Độ cao: ${data.altitude}m<br>Tốc độ: ${data.speed} km/h`);
+        }
+    });
+    
+    // Xử lý WebRTC
+    const videoElement = document.getElementById('videoStream');
+    const startStreamButton = document.getElementById('startStream');
+    const stopStreamButton = document.getElementById('stopStream');
+    const streamStatus = document.getElementById('streamStatus');
+    
+    let peerConnection;
+    
+    // Khởi tạo kết nối WebRTC
+    async function startWebRTC(deviceId) {
+        try {
+            streamStatus.textContent = 'Đang kết nối...';
+            streamStatus.className = 'badge bg-warning';
+            
+            // Tạo peer connection
+            const configuration = {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' }
+                ]
+            };
+            
+            peerConnection = new RTCPeerConnection(configuration);
+            
+            // Xử lý khi nhận được ICE candidate
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.emit('webrtc_ice_candidate', {
+                        device_id: deviceId,
+                        candidate: event.candidate
+                    });
+                }
+            };
+            
+            // Xử lý khi nhận được track
+            peerConnection.ontrack = event => {
+                videoElement.srcObject = event.streams[0];
+                streamStatus.textContent = 'Đang phát';
+                streamStatus.className = 'badge bg-success';
+            };
+            
+            // Tạo offer
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            
+            // Gửi offer đến server
+            socket.emit('webrtc_offer', {
+                device_id: deviceId,
+                sdp: peerConnection.localDescription.sdp,
+                type: peerConnection.localDescription.type
+            });
+        } catch (error) {
+            console.error('Lỗi khi khởi tạo WebRTC:', error);
+            streamStatus.textContent = 'Lỗi kết nối';
+            streamStatus.className = 'badge bg-danger';
+        }
+    }
+    
+    // Xử lý khi nhận được answer từ server
+    socket.on('webrtc_answer', async function(data) {
+        if (!peerConnection) return;
+        
+        try {
+            const remoteDesc = new RTCSessionDescription({
+                sdp: data.sdp,
+                type: data.type
+            });
+            
+            await peerConnection.setRemoteDescription(remoteDesc);
+        } catch (error) {
+            console.error('Lỗi khi xử lý answer:', error);
+        }
+    });
+    
+    // Xử lý khi nhận được ICE candidate từ server
+    socket.on('webrtc_ice_candidate', async function(data) {
+        if (!peerConnection) return;
+        
+        try {
+            await peerConnection.addIceCandidate(data.candidate);
+        } catch (error) {
+            console.error('Lỗi khi xử lý ICE candidate:', error);
+        }
+    });
+    
+    // Sự kiện khi nhấn nút bắt đầu stream
+    startStreamButton.addEventListener('click', function() {
+        startWebRTC('drone1');
+    });
+    
+    // Sự kiện khi nhấn nút dừng stream
+    stopStreamButton.addEventListener('click', function() {
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+        }
+        
+        videoElement.srcObject = null;
+        streamStatus.textContent = 'Đã dừng';
+        streamStatus.className = 'badge bg-secondary';
+    });
+    
+    // Xử lý khi chọn nguồn video
+    document.querySelectorAll('#videoSourceList a').forEach(item => {
+        item.addEventListener('click', function(e) {
+            e.preventDefault();
+            const deviceId = this.getAttribute('data-device-id');
+            document.getElementById('videoSourceDropdown').textContent = this.textContent;
+            
+            // Dừng stream hiện tại nếu có
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+                videoElement.srcObject = null;
+            }
+            
+            // Bắt đầu stream mới
+            startWebRTC(deviceId);
+        });
+    });
+    
+    // Xử lý khi thiết bị được thêm mới
+    socket.on('video_device_added', function(data) {
+        const deviceId = data.device_id;
+        const deviceName = deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
+        
+        // Thêm vào dropdown
+        const listItem = document.createElement('li');
+        listItem.innerHTML = `<a class="dropdown-item" href="#" data-device-id="${deviceId}">${deviceName}</a>`;
+        document.getElementById('videoSourceList').appendChild(listItem);
+        
+        // Thêm sự kiện click
+        listItem.querySelector('a').addEventListener('click', function(e) {
+            e.preventDefault();
+            document.getElementById('videoSourceDropdown').textContent = this.textContent;
+            startWebRTC(deviceId);
+        });
+    });
+</script>
+{% endblock %}
