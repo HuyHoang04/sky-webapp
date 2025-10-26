@@ -6,3 +6,4 @@ aiortc==1.2.1
 numpy
 gevent==21.8.0
 gevent-websocket==0.10.1
+onnxruntime

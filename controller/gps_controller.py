@@ -11,9 +11,6 @@ gps_data_store = {}
 
 @socketio.on('connect')
 def handle_connect():
-    """
-    Xử lý khi client kết nối WebSocket
-    """
     print('Client connected')
 
 @socketio.on('disconnect')

@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, render_template
+from flask_socketio import emit
 from model.video_model import VideoStream
 import json
 from socket_instance import socketio
@@ -12,6 +13,8 @@ video_blueprint = Blueprint('video', __name__)
 video_streams = {}
 # Lưu trữ các kết nối WebRTC
 peer_connections = {}
+# Lưu trữ các offer từ drone clients
+pending_offers = {}
 
 class VideoStreamTrack(MediaStreamTrack):
     """
@@ -51,50 +54,123 @@ def webrtc_view(device_id):
     return render_template('webrtc.html', device_id=device_id)
 
 @socketio.on('webrtc_offer')
-async def handle_webrtc_offer(data):
+def handle_webrtc_offer(data):
     """
-    Xử lý WebRTC offer từ client
+    Xử lý WebRTC offer từ drone client
     """
     device_id = data['device_id']
-    offer = RTCSessionDescription(sdp=data['sdp'], type=data['type'])
+    logging.info(f"Nhận webrtc_offer từ drone: {device_id}")
     
-    # Tạo peer connection mới
-    pc = RTCPeerConnection()
-    peer_connections[device_id] = pc
+    # Forward offer đến tất cả clients frontend
+    emit('webrtc_offer', data, broadcast=True, skip_sid=request.sid)
+    logging.info(f"Đã chuyển tiếp offer từ drone {device_id} đến frontend")
+
+
+@socketio.on('webrtc_answer')
+def handle_webrtc_answer(data):
+    """
+    Xử lý answer từ frontend
+    """
+    device_id = data['device_id']
+    logging.info(f"Nhận webrtc_answer từ frontend cho drone: {device_id}")
     
-    # Thiết lập các event handlers
-    @pc.on("connectionstatechange")
-    async def on_connectionstatechange():
-        print(f"Connection state for {device_id}: {pc.connectionState}")
-        if pc.connectionState == "failed":
-            await pc.close()
-            del peer_connections[device_id]
+    # Forward answer đến drone
+    emit('webrtc_answer', data, broadcast=True, skip_sid=request.sid)
+    logging.info(f"Đã chuyển tiếp answer đến drone: {device_id}")
+
+@socketio.on('start_webrtc')
+def handle_start_webrtc(data):
+    """
+    Xử lý yêu cầu bắt đầu WebRTC từ frontend
+    """
+    device_id = data['device_id']
+    logging.info(f"Nhận yêu cầu bắt đầu WebRTC cho drone: {device_id}")
     
-    # Xử lý offer và tạo answer
-    await pc.setRemoteDescription(offer)
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
+    # Chuyển tiếp yêu cầu đến drone
+    emit('start_webrtc', data, broadcast=True, skip_sid=request.sid)
+    logging.info(f"Đã chuyển tiếp yêu cầu bắt đầu WebRTC đến drone: {device_id}")
     
-    # Gửi answer về client
-    emit('webrtc_answer', {
-        'device_id': device_id,
-        'sdp': pc.localDescription.sdp,
-        'type': pc.localDescription.type
-    })
+@socketio.on('webrtc_ice_candidate')
+def handle_webrtc_ice_candidate(data):
+    """
+    Xử lý ICE candidate từ drone hoặc frontend
+    """
+    device_id = data['device_id']
+    logging.info(f"Nhận ICE candidate cho thiết bị: {device_id}")
+    
+    # Forward ICE candidate đến các clients khác
+    emit('webrtc_ice_candidate', data, broadcast=True, skip_sid=request.sid)
+    logging.info(f"Đã chuyển tiếp ICE candidate cho thiết bị: {device_id}")
+
+@socketio.on('webrtc_status')
+def handle_webrtc_status(data):
+    """
+    Xử lý cập nhật trạng thái WebRTC từ drone hoặc frontend
+    """
+    device_id = data.get('device_id')
+    status = data.get('status')
+    logging.info(f"Nhận trạng thái WebRTC từ thiết bị {device_id}: {status}")
+    
+    # Forward trạng thái đến các clients khác
+    emit('webrtc_status', data, broadcast=True, skip_sid=request.sid)
+            
+            
+            
+            
+            
+                
+                
+            
+
+            
+    
+    
+
+
+@socketio.on('webrtc_answer')
+def handle_webrtc_answer(data):
+    """
+    Xử lý answer từ drone hoặc frontend
+    """
+    device_id = data['device_id']
+    print(f"Received webrtc_answer for device: {device_id}")
+    
+    # Forward answer đến tất cả clients khác
+    emit('webrtc_answer', data, broadcast=True, skip_sid=request.sid)
+
 
 @socketio.on('webrtc_ice_candidate')
-async def handle_ice_candidate(data):
+def handle_ice_candidate(data):
     """
     Xử lý ICE candidate từ client
     """
     device_id = data['device_id']
-    if device_id in peer_connections:
-        candidate = RTCIceCandidate(
-            sdpMid=data['candidate'].get('sdpMid'),
-            sdpMLineIndex=data['candidate'].get('sdpMLineIndex'),
-            candidate=data['candidate'].get('candidate')
-        )
-        await peer_connections[device_id].addIceCandidate(candidate)
+    print(f"Forwarding ICE candidate for device: {device_id}")
+    
+    def add_candidate():
+        import asyncio
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            if device_id in peer_connections:
+                candidate = RTCIceCandidate(
+                    sdpMid=data['candidate'].get('sdpMid'),
+                    sdpMLineIndex=data['candidate'].get('sdpMLineIndex'),
+                    candidate=data['candidate'].get('candidate')
+                )
+                loop.run_until_complete(peer_connections[device_id].addIceCandidate(candidate))
+        except Exception as e:
+            print(f"Error adding ICE candidate: {e}")
+        finally:
+            loop.close()
+    
+    import threading
+    thread = threading.Thread(target=add_candidate)
+    thread.daemon = True
+    thread.start()
+    emit('webrtc_ice_candidate', data, broadcast=True, skip_sid=request.sid)
 
 @socketio.on('register_video_device')
 def register_video_device(data):

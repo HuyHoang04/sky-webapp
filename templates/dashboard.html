@@ -62,7 +62,7 @@
                             Chọn nguồn
                         </button>
                         <ul class="dropdown-menu" id="videoSourceList">
-                            <li><a class="dropdown-item" href="#" data-device-id="drone1">Drone 1</a></li>
+                            <li><a class="dropdown-item disabled" href="#">Không có thiết bị</a></li>
                         </ul>
                     </div>
                 </div>
@@ -166,14 +166,7 @@
                                 </tr>
                             </thead>
                             <tbody id="gpsDataTable">
-                                <tr>
-                                    <td>Drone 1</td>
-                                    <td id="drone1-lat">21.0285</td>
-                                    <td id="drone1-lng">105.8542</td>
-                                    <td id="drone1-alt">25m</td>
-                                    <td id="drone1-speed">15 km/h</td>
-                                    <td id="drone1-time">12:30:45</td>
-                                </tr>
+                                <!-- Dữ liệu GPS sẽ được load động -->
                             </tbody>
                         </table>
                     </div>
@@ -198,35 +191,155 @@
     // Markers cho các thiết bị
     const markers = {};
     
-    // Khởi tạo marker cho drone
-    markers.drone1 = L.marker([21.0285, 105.8542], {
-        icon: L.divIcon({
-            className: 'custom-div-icon',
-            html: '<div style="background-color: #007bff; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white;"></div>',
-            iconSize: [15, 15],
-            iconAnchor: [7, 7]
-        })
-    }).addTo(map).bindPopup('Drone 1');
+    // Load danh sách video streams từ API
+    async function loadVideoStreams() {
+        try {
+            const response = await fetch('/api/video/streams');
+            const streams = await response.json();
+            
+            const videoSourceList = document.getElementById('videoSourceList');
+            videoSourceList.innerHTML = ''; // Clear existing items
+            
+            for (const [deviceId, stream] of Object.entries(streams)) {
+                const listItem = document.createElement('li');
+                const deviceName = stream.device_name || deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
+                listItem.innerHTML = `<a class="dropdown-item" href="#" data-device-id="${deviceId}">${deviceName}</a>`;
+                videoSourceList.appendChild(listItem);
+                
+                // Thêm marker cho bản đồ
+                if (!markers[deviceId]) {
+                    markers[deviceId] = L.marker([21.0285, 105.8542], {
+                        icon: L.divIcon({
+                            className: 'custom-div-icon',
+                            html: '<div style="background-color: #007bff; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white;"></div>',
+                            iconSize: [15, 15],
+                            iconAnchor: [7, 7]
+                        })
+                    }).addTo(map).bindPopup(`${deviceName} (${deviceId})`);
+                }
+            }
+            
+            // Thêm event listeners cho các item mới
+            document.querySelectorAll('#videoSourceList a').forEach(item => {
+                item.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const deviceId = this.getAttribute('data-device-id');
+                    const deviceName = this.textContent;
+                    document.getElementById('videoSourceDropdown').textContent = deviceName;
+                    
+                    // Dừng stream hiện tại nếu có
+                    if (peerConnection) {
+                        peerConnection.close();
+                        peerConnection = null;
+                        videoElement.srcObject = null;
+                    }
+                    
+                    // Bắt đầu stream mới
+                    startWebRTC(deviceId);
+                });
+            });
+            
+            // Set device đầu tiên làm mặc định
+            const firstDevice = document.querySelector('#videoSourceList a[data-device-id]');
+            if (firstDevice && !document.getElementById('videoSourceDropdown').getAttribute('data-device-id')) {
+                const deviceId = firstDevice.getAttribute('data-device-id');
+                const deviceName = firstDevice.textContent;
+                document.getElementById('videoSourceDropdown').textContent = deviceName;
+                document.getElementById('videoSourceDropdown').setAttribute('data-device-id', deviceId);
+            }
+            
+        } catch (error) {
+            console.error('Lỗi khi load danh sách video streams:', error);
+        }
+    }
+    
+    // Load danh sách GPS data từ API
+    async function loadGPSData() {
+        try {
+            const response = await fetch('/api/gps');
+            const gpsData = await response.json();
+            
+            const gpsTable = document.getElementById('gpsDataTable');
+            gpsTable.innerHTML = ''; // Clear existing rows
+            
+            for (const [deviceId, data] of Object.entries(gpsData)) {
+                const row = document.createElement('tr');
+                const deviceName = data.device_name || deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
+                const timestamp = new Date(data.timestamp).toLocaleTimeString();
+                
+                row.innerHTML = `
+                    <td>${deviceName}</td>
+                    <td id="${deviceId}-lat">${data.latitude.toFixed(6)}</td>
+                    <td id="${deviceId}-lng">${data.longitude.toFixed(6)}</td>
+                    <td id="${deviceId}-alt">${data.altitude}m</td>
+                    <td id="${deviceId}-speed">${data.speed} km/h</td>
+                    <td id="${deviceId}-time">${timestamp}</td>
+                `;
+                gpsTable.appendChild(row);
+                
+                // Cập nhật marker trên bản đồ
+                if (markers[deviceId]) {
+                    markers[deviceId].setLatLng([data.latitude, data.longitude]);
+                    markers[deviceId].getPopup().setContent(`${deviceName}<br>Độ cao: ${data.altitude}m<br>Tốc độ: ${data.speed} km/h`);
+                }
+            }
+        } catch (error) {
+            console.error('Lỗi khi load GPS data:', error);
+        }
+    }
+    
+    // Load dữ liệu ban đầu
+    loadVideoStreams();
+    loadGPSData();
     
     // Xử lý khi nhận dữ liệu GPS mới
     socket.on('gps_update', function(data) {
         console.log('Nhận dữ liệu GPS:', data);
         
-        // Cập nhật bảng dữ liệu
         const deviceId = data.device_id;
+        const deviceName = data.device_name || deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
         const timestamp = new Date(data.timestamp).toLocaleTimeString();
         
-        // Cập nhật bảng
-        document.getElementById(`${deviceId}-lat`).textContent = data.latitude.toFixed(6);
-        document.getElementById(`${deviceId}-lng`).textContent = data.longitude.toFixed(6);
-        document.getElementById(`${deviceId}-alt`).textContent = `${data.altitude}m`;
-        document.getElementById(`${deviceId}-speed`).textContent = `${data.speed} km/h`;
-        document.getElementById(`${deviceId}-time`).textContent = timestamp;
+        // Kiểm tra xem device đã có trong bảng chưa
+        let row = document.getElementById(`${deviceId}-lat`);
+        if (!row) {
+            // Thêm device mới vào bảng
+            const gpsTable = document.getElementById('gpsDataTable');
+            const newRow = document.createElement('tr');
+            newRow.innerHTML = `
+                <td>${deviceName}</td>
+                <td id="${deviceId}-lat">${data.latitude.toFixed(6)}</td>
+                <td id="${deviceId}-lng">${data.longitude.toFixed(6)}</td>
+                <td id="${deviceId}-alt">${data.altitude}m</td>
+                <td id="${deviceId}-speed">${data.speed} km/h</td>
+                <td id="${deviceId}-time">${timestamp}</td>
+            `;
+            gpsTable.appendChild(newRow);
+            
+            // Thêm marker cho bản đồ nếu chưa có
+            if (!markers[deviceId]) {
+                markers[deviceId] = L.marker([data.latitude, data.longitude], {
+                    icon: L.divIcon({
+                        className: 'custom-div-icon',
+                        html: '<div style="background-color: #007bff; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white;"></div>',
+                        iconSize: [15, 15],
+                        iconAnchor: [7, 7]
+                    })
+                }).addTo(map).bindPopup(`${deviceName} (${deviceId})`);
+            }
+        } else {
+            // Cập nhật dữ liệu hiện có
+            document.getElementById(`${deviceId}-lat`).textContent = data.latitude.toFixed(6);
+            document.getElementById(`${deviceId}-lng`).textContent = data.longitude.toFixed(6);
+            document.getElementById(`${deviceId}-alt`).textContent = `${data.altitude}m`;
+            document.getElementById(`${deviceId}-speed`).textContent = `${data.speed} km/h`;
+            document.getElementById(`${deviceId}-time`).textContent = timestamp;
+        }
         
         // Cập nhật marker trên bản đồ
         if (markers[deviceId]) {
             markers[deviceId].setLatLng([data.latitude, data.longitude]);
-            markers[deviceId].getPopup().setContent(`${deviceId}<br>Độ cao: ${data.altitude}m<br>Tốc độ: ${data.speed} km/h`);
+            markers[deviceId].getPopup().setContent(`${deviceName}<br>Độ cao: ${data.altitude}m<br>Tốc độ: ${data.speed} km/h`);
         }
     });
     
@@ -241,6 +354,7 @@
     // Khởi tạo kết nối WebRTC
     async function startWebRTC(deviceId) {
         try {
+            console.log('startWebRTC called with deviceId:', deviceId);
             streamStatus.textContent = 'Đang kết nối...';
             streamStatus.className = 'badge bg-warning';
             
@@ -265,21 +379,18 @@
             
             // Xử lý khi nhận được track
             peerConnection.ontrack = event => {
+                console.log('Received video track');
                 videoElement.srcObject = event.streams[0];
                 streamStatus.textContent = 'Đang phát';
                 streamStatus.className = 'badge bg-success';
             };
             
-            // Tạo offer
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            
-            // Gửi offer đến server
-            socket.emit('webrtc_offer', {
-                device_id: deviceId,
-                sdp: peerConnection.localDescription.sdp,
-                type: peerConnection.localDescription.type
+            // Gửi yêu cầu bắt đầu stream đến server
+            console.log('Requesting stream start for device:', deviceId);
+            socket.emit('start_webrtc_stream', {
+                device_id: deviceId
             });
+            
         } catch (error) {
             console.error('Lỗi khi khởi tạo WebRTC:', error);
             streamStatus.textContent = 'Lỗi kết nối';
@@ -287,17 +398,48 @@
         }
     }
     
-    // Xử lý khi nhận được answer từ server
-    socket.on('webrtc_answer', async function(data) {
+    // Xử lý khi nhận được offer từ server (từ drone)
+    socket.on('webrtc_offer', async function(data) {
         if (!peerConnection) return;
         
         try {
+            console.log('Received offer from drone, creating answer');
             const remoteDesc = new RTCSessionDescription({
                 sdp: data.sdp,
                 type: data.type
             });
             
             await peerConnection.setRemoteDescription(remoteDesc);
+            
+            // Tạo answer
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            
+            // Gửi answer về server
+            socket.emit('webrtc_answer', {
+                device_id: data.device_id,
+                sdp: peerConnection.localDescription.sdp,
+                type: peerConnection.localDescription.type
+            });
+            
+            console.log('Sent answer to server');
+        } catch (error) {
+            console.error('Lỗi khi xử lý offer:', error);
+        }
+    });
+    
+    // Xử lý khi nhận được answer từ server
+    socket.on('webrtc_answer', async function(data) {
+        if (!peerConnection) return;
+        
+        try {
+            console.log('Received answer from server, setting remote description');
+            const remoteDesc = new RTCSessionDescription({
+                type: data.type,
+                sdp: data.sdp
+            });
+            await peerConnection.setRemoteDescription(remoteDesc);
+            console.log('Remote description set successfully');
         } catch (error) {
             console.error('Lỗi khi xử lý answer:', error);
         }
@@ -316,7 +458,9 @@
     
     // Sự kiện khi nhấn nút bắt đầu stream
     startStreamButton.addEventListener('click', function() {
-        startWebRTC('drone1');
+        const selectedDevice = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
+        console.log('Starting WebRTC for device:', selectedDevice);
+        startWebRTC(selectedDevice);
     });
     
     // Sự kiện khi nhấn nút dừng stream
@@ -332,11 +476,14 @@
     });
     
     // Xử lý khi chọn nguồn video
-    document.querySelectorAll('#videoSourceList a').forEach(item => {
-        item.addEventListener('click', function(e) {
+    document.addEventListener('click', function(e) {
+        if (e.target.matches('#videoSourceList a')) {
             e.preventDefault();
-            const deviceId = this.getAttribute('data-device-id');
-            document.getElementById('videoSourceDropdown').textContent = this.textContent;
+            const deviceId = e.target.getAttribute('data-device-id');
+            const deviceName = e.target.textContent;
+            const dropdown = document.getElementById('videoSourceDropdown');
+            dropdown.textContent = deviceName;
+            dropdown.setAttribute('data-device-id', deviceId);
             
             // Dừng stream hiện tại nếu có
             if (peerConnection) {
@@ -347,25 +494,60 @@
             
             // Bắt đầu stream mới
             startWebRTC(deviceId);
-        });
+        }
     });
     
     // Xử lý khi thiết bị được thêm mới
     socket.on('video_device_added', function(data) {
+        console.log('Thiết bị video mới:', data);
+        
         const deviceId = data.device_id;
-        const deviceName = deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
+        const deviceName = data.device_name || deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
         
-        // Thêm vào dropdown
-        const listItem = document.createElement('li');
-        listItem.innerHTML = `<a class="dropdown-item" href="#" data-device-id="${deviceId}">${deviceName}</a>`;
-        document.getElementById('videoSourceList').appendChild(listItem);
+        // Thêm vào dropdown video source
+        const videoSourceList = document.getElementById('videoSourceList');
+        let existingItem = videoSourceList.querySelector(`[data-device-id="${deviceId}"]`);
         
-        // Thêm sự kiện click
-        listItem.querySelector('a').addEventListener('click', function(e) {
-            e.preventDefault();
-            document.getElementById('videoSourceDropdown').textContent = this.textContent;
-            startWebRTC(deviceId);
-        });
+        if (!existingItem) {
+            const listItem = document.createElement('li');
+            listItem.innerHTML = `<a class="dropdown-item" href="#" data-device-id="${deviceId}">${deviceName}</a>`;
+            videoSourceList.appendChild(listItem);
+            
+            // Nếu là device đầu tiên, set làm mặc định
+            const dropdown = document.getElementById('videoSourceDropdown');
+            if (!dropdown.getAttribute('data-device-id')) {
+                dropdown.textContent = deviceName;
+                dropdown.setAttribute('data-device-id', deviceId);
+            }
+        }
+        
+        // Thêm vào bảng GPS nếu chưa có
+        let gpsRow = document.getElementById(`${deviceId}-lat`);
+        if (!gpsRow) {
+            const gpsTable = document.getElementById('gpsDataTable');
+            const newRow = document.createElement('tr');
+            newRow.innerHTML = `
+                <td>${deviceName}</td>
+                <td id="${deviceId}-lat">--</td>
+                <td id="${deviceId}-lng">--</td>
+                <td id="${deviceId}-alt">--</td>
+                <td id="${deviceId}-speed">--</td>
+                <td id="${deviceId}-time">--</td>
+            `;
+            gpsTable.appendChild(newRow);
+        }
+        
+        // Thêm marker cho bản đồ nếu chưa có
+        if (!markers[deviceId]) {
+            markers[deviceId] = L.marker([21.0285, 105.8542], {
+                icon: L.divIcon({
+                    className: 'custom-div-icon',
+                    html: '<div style="background-color: #007bff; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white;"></div>',
+                    iconSize: [15, 15],
+                    iconAnchor: [7, 7]
+                })
+            }).addTo(map).bindPopup(`${deviceName} (${deviceId})`);
+        }
     });
 </script>
 {% endblock %}
