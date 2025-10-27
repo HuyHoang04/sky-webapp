@@ -13,7 +13,7 @@ Hệ thống web cho phép hiển thị video thời gian thực từ Raspberry 
 
 - Python 3.7+
 - Raspberry Pi với camera (cho video streaming)
-- Thiết bị có GPS (drone, phao cứu hộ)
+- Thiết bị có GPS (drone, phao tín hiệu)
 - Trình duyệt web hiện đại hỗ trợ WebRTC và WebSocket
 
 ## Cài đặt
