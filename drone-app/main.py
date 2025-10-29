@@ -12,6 +12,7 @@ import os
 import time
 import uuid
 from datetime import datetime
+import nest_asyncio
 
 import cv2
 import numpy as np
@@ -26,7 +27,7 @@ from aiortc import (
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from av import VideoFrame
 from camera_utils import setup_camera, load_onnx_model
-from gps_utils import simulate_gps_data
+from gps_utils import read_gps, gps_task
 from video_stream import ObjectDetectionStreamTrack
 
 # Configure logging
@@ -38,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger("drone-client")
 
 # Default configuration
-DEFAULT_SERVER_URL = "http://localhost:5000"
+DEFAULT_SERVER_URL = "https://kanisha-unannexable-laraine.ngrok-free.dev"
 DEFAULT_DEVICE_ID = "drone-camera"  # Fixed device ID for easier debugging
 DEFAULT_DEVICE_NAME = "Drone Camera"
 DEFAULT_FPS = 30
@@ -59,7 +60,7 @@ device_id = DEFAULT_DEVICE_ID
 device_name = DEFAULT_DEVICE_NAME
 relay = MediaRelay()
 webcam = None
-gps_task = None
+gps_task_runner = None
 running = True
 ort_session = None
 reconnect_task = None
@@ -203,11 +204,12 @@ async def connect():
     except Exception as e:
         logger.error(f"Failed to create WebRTC offer: {e}")
     
-    # Start GPS data simulation
-    global gps_task, running
-    if gps_task and not gps_task.done():
+    # Start real GPS task
+    global gps_task_runner, running
+    if gps_task_runner and not gps_task_runner.done():
         gps_task.cancel()
-    gps_task = asyncio.create_task(simulate_gps_data(sio, device_id, device_name, running, DEFAULT_GPS_INTERVAL))
+    gps_task_runner = asyncio.create_task(gps_task(sio, device_id, device_name, serial_port="/dev/ttyAMA0", baudrate=9600, gps_interval=DEFAULT_GPS_INTERVAL))
+    logger.info("Started real GPS task from module gps_utils")
 
 
 @sio.event
@@ -217,8 +219,8 @@ async def disconnect():
     
     # Don't set running to False here to allow reconnection
     # Just cancel the GPS task, it will be restarted on reconnect
-    if gps_task and not gps_task.done():
-        gps_task.cancel()
+    if gps_task_runner and not gps_task_runner.done():
+        gps_task_runner.cancel()
 
 
 @sio.event
@@ -397,11 +399,14 @@ async def main():
         await cleanup()
         logger.info("Shutdown complete")
 
+nest_asyncio.apply()
 
 if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
     try:
-        asyncio.run(main())
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("User stopped program")
+    finally:
+        loop.run_until_complete(asyncio.sleep(0.1))
+        loop.close()
