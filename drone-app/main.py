@@ -39,10 +39,10 @@ logging.basicConfig(
 logger = logging.getLogger("drone-client")
 
 # Default configuration
-DEFAULT_SERVER_URL = "https://kanisha-unannexable-laraine.ngrok-free.dev"
+DEFAULT_SERVER_URL = "https://popular-catfish-slightly.ngrok-free.app"
 DEFAULT_DEVICE_ID = "drone-camera"  # Fixed device ID for easier debugging
 DEFAULT_DEVICE_NAME = "Drone Camera"
-DEFAULT_FPS = 30
+DEFAULT_FPS = 15
 DEFAULT_WIDTH = 640
 DEFAULT_HEIGHT = 480
 DEFAULT_GPS_INTERVAL = 1.0  # seconds
@@ -81,6 +81,7 @@ async def create_peer_connection():
             RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
             RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
             RTCIceServer(urls=["stun:stun2.l.google.com:19302"]),
+            RTCIceServer(urls=["turn:relay1.expressturn.com:3480"], username="000000002076929768", credential="glxmCqGZVm2WqKrB/EXZsf2SZGc="),
         ]
     )
     peer_connection = RTCPeerConnection(config)
@@ -204,12 +205,14 @@ async def connect():
     except Exception as e:
         logger.error(f"Failed to create WebRTC offer: {e}")
     
+    
     # Start real GPS task
     global gps_task_runner, running
     if gps_task_runner and not gps_task_runner.done():
         gps_task.cancel()
     gps_task_runner = asyncio.create_task(gps_task(sio, device_id, device_name, serial_port="/dev/ttyAMA0", baudrate=9600, gps_interval=DEFAULT_GPS_INTERVAL))
     logger.info("Started real GPS task from module gps_utils")
+    
 
 
 @sio.event
@@ -254,9 +257,9 @@ async def webrtc_ice_candidate(data):
     try:
         if peer_connection and peer_connection.connectionState != "closed":
             candidate = RTCIceCandidate(
+                data['candidate']['candidate'],
                 sdpMid=data['candidate'].get('sdpMid'),
                 sdpMLineIndex=data['candidate'].get('sdpMLineIndex'),
-                candidate=data['candidate']['candidate']
             )
             await peer_connection.addIceCandidate(candidate)
             logger.debug(f"Added remote ICE candidate: {candidate.candidate}")
@@ -317,9 +320,10 @@ async def cleanup():
 
 async def main():
     """Main function"""
-    global webcam, ort_session, running, device_id, device_name
+    global webcam, ort_session, running, device_id, device_name, gps_task_runner, running
     
     # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Drone App Client")
     parser = argparse.ArgumentParser(description="Drone App Client")
     parser.add_argument("--server", default=DEFAULT_SERVER_URL, help="Server URL")
     parser.add_argument("--device-id", default=DEFAULT_DEVICE_ID, help="Device ID")
@@ -331,6 +335,8 @@ async def main():
     parser.add_argument("--no-detection", action="store_true", help="Disable object detection")
 
     args = parser.parse_args()
+    
+    logger.info(f"Server URL: {DEFAULT_SERVER_URL}")
     
     # Set global variables
     device_id = args.device_id
@@ -390,6 +396,13 @@ async def main():
     try:
         while running:
             await asyncio.sleep(1)
+            """
+            # Start real GPS task
+            if gps_task_runner and not gps_task_runner.done():
+                gps_task_runner.cancel()
+            gps_task_runner = asyncio.create_task(gps_task(sio, device_id, device_name, serial_port="/dev/ttyAMA0", baudrate=9600, gps_interval=DEFAULT_GPS_INTERVAL))
+            logger.info("Started real GPS task from module gps_utils")
+            """
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received, shutting down gracefully")
     except Exception as e:
