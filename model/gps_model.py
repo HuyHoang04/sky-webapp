@@ -1,3 +1,7 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
 class GPSData:
     def __init__(self, device_id, latitude, longitude, altitude=0, speed=0, timestamp=None):
         """
@@ -17,6 +21,7 @@ class GPSData:
         self.altitude = altitude
         self.speed = speed
         self.timestamp = timestamp
+        logger.debug(f"[GPS MODEL] Created GPSData for device: {device_id}, lat: {latitude}, lon: {longitude}")
     
     def to_dict(self):
         """

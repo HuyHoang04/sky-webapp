@@ -119,11 +119,8 @@ class WebRTCClient {
         // Tạo peer connection với nhiều STUN servers để tăng khả năng kết nối
         this.peerConnection = new RTCPeerConnection({
             iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' }
+                {'urls': 'stun:stun.l.google.com:19302'}, 
+                {'urls': 'turn:relay1.expressturn.com:3480', 'username': '000000002076929768', 'credential': 'glxmCqGZVm2WqKrB/EXZsf2SZGc='}  
             ],
             iceCandidatePoolSize: 10,
             bundlePolicy: 'max-bundle',
