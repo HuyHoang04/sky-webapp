@@ -18,6 +18,7 @@ report_interval = 60  # Default 1 minute (60 seconds)
 detection_camera = None  # Shared camera reference (not a separate instance)
 detection_ort_session = None  # ONNX model session
 video_track_ref = None  # Reference to video track for frame buffer access
+using_direct_camera = False  # Flag to track if we're using direct camera capture
 latest_detection_data = {
     "earth_person": 0,
     "sea_person": 0,
@@ -103,29 +104,55 @@ def compute_iou(box1, box2):
 
 def detect_objects_from_camera():
     """
-    Get frame from video track buffer and run detection
-    No direct camera access to avoid conflicts
+    Get frame from video track buffer OR directly from camera (fallback)
+    Automatically switches between modes to avoid camera conflicts
     Returns: (frame, detection_data) or (None, None) if failed
     """
-    global detection_camera, detection_ort_session, video_track_ref, latest_detection_data
+    global detection_camera, detection_ort_session, video_track_ref, latest_detection_data, using_direct_camera
     
-    # Use video track's frame buffer instead of direct camera access
-    if video_track_ref is None or not video_track_ref.is_active():
-        logger.warning("Video track not available for detection")
+    frame = None
+    current_mode_is_direct = False
+    
+    # Try to get frame from video track buffer first (preferred, no camera conflict)
+    if video_track_ref and video_track_ref.is_active():
+        try:
+            frame = video_track_ref.frame_buffer.get_latest_frame()
+            if frame is not None:
+                # Successfully got frame from video_track
+                if using_direct_camera:
+                    # We were using direct camera, now switch back to video_track
+                    logger.info("WebRTC is back! Switching from direct camera to video_track buffer")
+                    using_direct_camera = False
+                current_mode_is_direct = False
+        except Exception as e:
+            logger.debug(f"Failed to get frame from video_track: {e}")
+    
+    # Fallback: Get frame directly from camera if video_track is not available
+    if frame is None and detection_camera:
+        try:
+            frame = detection_camera.capture_array()
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            current_mode_is_direct = True
+            
+            if not using_direct_camera:
+                # First time switching to direct camera
+                logger.info("WebRTC unavailable, switching to direct camera capture (fallback mode)")
+                using_direct_camera = True
+                
+        except Exception as e:
+            logger.debug(f"Failed to capture from camera directly: {e}")
+            # If we were using direct camera and now it fails, reset the flag
+            if using_direct_camera:
+                using_direct_camera = False
+            return None, None
+    
+    if frame is None:
         return None, None
     
     if detection_ort_session is None:
-        logger.warning("ONNX session not available for detection")
         return None, None
     
     try:
-        # Get frame from video track buffer (no camera conflict)
-        frame = video_track_ref.frame_buffer.get_latest_frame()
-        
-        if frame is None:
-            logger.warning("No frame available in buffer")
-            return None, None
-        
         # Make a copy to avoid modifying the original
         frame = frame.copy()
         original_height, original_width = frame.shape[:2]

@@ -105,42 +105,56 @@ def send_detection_data(detection_data):
 async def continuous_detection_task():
     """
     Continuous task to run detection and send real-time updates
-    Uses video_track's frame buffer - no camera conflict
+    Automatically switches between video_track buffer and direct camera
     """
     global running, last_detection_emit_time, video_track
     
-    logger.info("Started continuous detection task (using video_track buffer)")
+    logger.info("Continuous detection task started, waiting for setup...")
     
-    # Wait for video_track to be ready (initial wait)
-    logger.info("Waiting for video_track to be ready...")
+    # Wait for video_track to be ready AND detection to be setup
+    logger.info("Waiting for video_track and detection setup...")
     wait_count = 0
-    while (video_track is None or not video_track.is_active()) and running and wait_count < 30:
+    max_wait = 60  # Wait up to 60 seconds
+    
+    while running and wait_count < max_wait:
+        if video_track and video_track.is_active():
+            # Check if detection is setup by trying to get frame buffer
+            try:
+                frame = video_track.frame_buffer.get_latest_frame()
+                if frame is not None:
+                    logger.info("Video track and detection are ready!")
+                    break
+            except:
+                pass
+        
         await asyncio.sleep(1)
         wait_count += 1
     
-    if video_track is None or not video_track.is_active():
-        logger.error("Video track not available after waiting, detection task will exit")
-        return
+    if wait_count >= max_wait:
+        logger.warning("Timeout waiting for video_track, will try direct camera fallback")
     
-    logger.info("Video track is ready, starting detection loop")
+    logger.info("Starting detection loop (with automatic camera fallback)...")
+    
+    failed_count = 0
+    max_failed = 10  # If detection fails 10 times in a row, wait longer
     
     while running:
         try:
-            # Check if video_track is still active
-            if video_track is None or not video_track.is_active():
-                logger.warning("Video track became inactive, waiting for reconnection...")
-                await asyncio.sleep(2)
-                continue
-            
-            # Run detection from camera (uses video_track buffer internally)
+            # Run detection - automatically switches between video_track and direct camera
             frame, detection_data = detect_objects_from_camera()
             
             if detection_data:
                 # Send detection data (with throttling)
                 send_detection_data(detection_data)
+                failed_count = 0  # Reset failed counter on success
+            else:
+                failed_count += 1
             
-            # Run detection every 0.5 seconds (2 FPS for detection)
-            await asyncio.sleep(0.5)
+            # Adaptive sleep: wait longer if detection is failing
+            if failed_count >= max_failed:
+                await asyncio.sleep(2)  # Wait longer when failing
+            else:
+                await asyncio.sleep(0.5)  # Normal: 2 FPS for detection
             
         except asyncio.CancelledError:
             logger.info("Continuous detection task cancelled")
