@@ -42,10 +42,23 @@ def set_detection_camera(camera, ort_session, video_track=None):
         video_track: Video track instance for frame buffer access
     """
     global detection_camera, detection_ort_session, video_track_ref
+    
+    logger.info(f"Setting detection camera: camera={camera is not None}, ort_session={ort_session is not None}, video_track={video_track is not None}")
+    
     detection_camera = camera
     detection_ort_session = ort_session
     video_track_ref = video_track
+    
+    # Verify globals were set
+    logger.info(f"After setting: detection_camera={detection_camera is not None}, detection_ort_session={detection_ort_session is not None}, video_track_ref={video_track_ref is not None}")
     logger.info("Detection camera and model set (shared with WebRTC, no conflict)")
+
+
+def is_detection_ready():
+    """Check if detection is ready to run"""
+    global detection_camera, detection_ort_session, video_track_ref
+    return (detection_ort_session is not None and 
+            (video_track_ref is not None or detection_camera is not None))
 
 
 def get_latest_detection():

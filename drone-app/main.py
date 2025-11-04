@@ -33,7 +33,8 @@ from detection_utils import (
     periodic_report_task, on_demand_report,
     set_report_interval, enable_periodic_report, disable_periodic_report,
     is_periodic_report_enabled, get_report_interval,
-    set_detection_camera, detect_objects_from_camera, get_latest_detection
+    set_detection_camera, detect_objects_from_camera, get_latest_detection,
+    is_detection_ready
 )
 
 # Configure logging
@@ -114,27 +115,22 @@ async def continuous_detection_task():
     
     logger.info("Continuous detection task started, waiting for setup...")
     
-    # Wait for video_track to be ready AND detection to be setup
-    logger.info("Waiting for video_track and detection setup...")
+    # Wait for detection to be fully setup
+    logger.info("Waiting for detection setup (ort_session, camera, video_track)...")
     wait_count = 0
     max_wait = 60  # Wait up to 60 seconds
     
     while running and wait_count < max_wait:
-        if video_track and video_track.is_active():
-            # Check if detection is setup by trying to get frame buffer
-            try:
-                frame = video_track.frame_buffer.get_latest_frame()
-                if frame is not None:
-                    logger.info("Video track and detection are ready!")
-                    break
-            except:
-                pass
+        if is_detection_ready():
+            logger.info("Detection is fully setup and ready!")
+            break
         
         await asyncio.sleep(1)
         wait_count += 1
     
     if wait_count >= max_wait:
-        logger.warning("Timeout waiting for video_track, will try direct camera fallback")
+        logger.error("Timeout waiting for detection setup!")
+        return
     
     logger.info("Starting detection loop (with automatic camera fallback)...")
     
@@ -380,10 +376,16 @@ async def connect():
     
     logger.info("Video track is ready, starting detection tasks")
     
+    # Debug: Check if detection setup can be done
+    logger.info(f"Detection setup check: ort_session={ort_session is not None}, webcam={webcam is not None}, video_track={video_track is not None}")
+    
     # Ensure detection is setup with current video_track and camera
     if ort_session and webcam:
         set_detection_camera(webcam, ort_session, video_track)
-        logger.debug("Detection setup refreshed after connect")
+        logger.info("Detection setup refreshed after connect")
+    else:
+        logger.error(f"Cannot setup detection: ort_session={ort_session is not None}, webcam={webcam is not None}")
+        return
     
     # Only start tasks once (prevent duplicate on reconnect)
     global tasks_started
