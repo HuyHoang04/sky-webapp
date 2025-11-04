@@ -32,7 +32,8 @@ from video_stream import ObjectDetectionStreamTrack
 from detection_utils import (
     periodic_report_task, on_demand_report,
     set_report_interval, enable_periodic_report, disable_periodic_report,
-    is_periodic_report_enabled, get_report_interval
+    is_periodic_report_enabled, get_report_interval,
+    set_detection_camera, detect_objects_from_camera, get_latest_detection
 )
 
 # Configure logging
@@ -65,6 +66,7 @@ device_id = DEFAULT_DEVICE_ID
 device_name = DEFAULT_DEVICE_NAME
 relay = MediaRelay()
 webcam = None
+detection_camera = None  # Separate camera for detection (fallback)
 gps_task_runner = None
 running = True
 ort_session = None
@@ -72,6 +74,7 @@ reconnect_task = None
 video_track = None
 last_detection_emit_time = 0  # Throttle detection data emission
 report_task_runner = None  # Periodic report task
+detection_task_runner = None  # Continuous detection task for real-time updates
 
 
 def send_detection_data(detection_data):
@@ -98,6 +101,35 @@ def send_detection_data(detection_data):
     
     # Emit asynchronously
     asyncio.create_task(sio.emit("detection_data", data_to_send))
+
+
+async def continuous_detection_task():
+    """
+    Continuous task to run detection and send real-time updates
+    Independent from WebRTC, uses fallback camera
+    """
+    global running, last_detection_emit_time
+    
+    logger.info("Started continuous detection task (independent from WebRTC)")
+    
+    while running:
+        try:
+            # Run detection from camera
+            frame, detection_data = detect_objects_from_camera()
+            
+            if detection_data:
+                # Send detection data (with throttling)
+                send_detection_data(detection_data)
+            
+            # Run detection every 0.5 seconds (2 FPS for detection)
+            await asyncio.sleep(0.5)
+            
+        except asyncio.CancelledError:
+            logger.info("Continuous detection task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in continuous detection task: {e}", exc_info=True)
+            await asyncio.sleep(1)  # Wait before retrying
     logger.debug(f"Sent detection data: Earth={detection_data['earth_person']}, Sea={detection_data['sea_person']}")
 
 
@@ -214,7 +246,7 @@ async def restart_webrtc():
 @sio.event
 async def connect():
     """Handle Socket.IO connection"""
-    global gps_task_runner, report_task_runner, running
+    global gps_task_runner, report_task_runner, detection_task_runner, running
     
     logger.info(f"Connected to server as {device_id}")
     
@@ -248,23 +280,24 @@ async def connect():
     # Start real GPS task
     if gps_task_runner and not gps_task_runner.done():
         gps_task_runner.cancel()
-    gps_task_runner = asyncio.create_task(gps_task(sio, device_id, device_name, serial_port="/dev/ttyAMA0", baudrate=9600, gps_interval=DEFAULT_GPS_INTERVAL))
-    logger.info("Started real GPS task from module gps_utils")
+    gps_task_runner = asyncio.create_task(
+        gps_task(sio, device_id, device_name, serial_port="/dev/ttyAMA0", baudrate=9600, gps_interval=DEFAULT_GPS_INTERVAL)
+    )
+    logger.info("Started GPS task")
     
-    # Start periodic detection report task (every 5 minutes = 300 seconds)
+    # Start periodic report task (independent from WebRTC)
     if report_task_runner and not report_task_runner.done():
         report_task_runner.cancel()
+    report_task_runner = asyncio.create_task(
+        periodic_report_task(sio, device_id, device_name, video_track=None)
+    )
+    logger.info("Started periodic detection report task (independent from WebRTC)")
     
-    # Wait a bit for video track to be ready
-    await asyncio.sleep(2)
-    
-    if video_track:
-        # Start with default interval from detection_utils
-        report_task_runner = asyncio.create_task(
-            periodic_report_task(sio, device_id, device_name, video_track)
-        )
-        logger.info(f"Started periodic detection report task (default interval, can be configured from UI)")
-    
+    # Start continuous detection task for real-time updates
+    if detection_task_runner and not detection_task_runner.done():
+        detection_task_runner.cancel()
+    detection_task_runner = asyncio.create_task(continuous_detection_task())
+    logger.info("Started continuous detection task (independent from WebRTC)")
 
 
 @sio.event
@@ -448,10 +481,9 @@ async def cleanup():
 
 async def main():
     """Main function"""
-    global webcam, ort_session, running, device_id, device_name, gps_task_runner, running
+    global webcam, detection_camera, ort_session, running, device_id, device_name, gps_task_runner, running
     
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Drone App Client")
     parser = argparse.ArgumentParser(description="Drone App Client")
     parser.add_argument("--server", default=DEFAULT_SERVER_URL, help="Server URL")
     parser.add_argument("--device-id", default=DEFAULT_DEVICE_ID, help="Device ID")
@@ -479,24 +511,45 @@ async def main():
     else:
         logger.info("Object detection disabled by command line argument")
     
-    # Setup camera with retry mechanism
+    # Setup camera with retry mechanism (for WebRTC)
     retry_count = 0
     max_retries = 3
     
     while retry_count < max_retries and not webcam:
-        logger.info(f"Setting up camera (attempt {retry_count + 1}/{max_retries})")
+        logger.info(f"Setting up WebRTC camera (attempt {retry_count + 1}/{max_retries})")
         webcam = await setup_camera(args.width, args.height, args.fps)
         
         if not webcam:
             retry_count += 1
             if retry_count < max_retries:
-                logger.warning(f"Failed to setup camera, retrying in 2 seconds...")
+                logger.warning(f"Failed to setup WebRTC camera, retrying in 2 seconds...")
                 await asyncio.sleep(2)
             else:
-                logger.error("Failed to setup camera after multiple attempts")
+                logger.error("Failed to setup WebRTC camera after multiple attempts")
                 return
     
-    logger.info("Camera setup successful")
+    logger.info("WebRTC camera setup successful")
+    
+    # Setup separate detection camera (fallback, independent from WebRTC)
+    if ort_session:
+        retry_count = 0
+        while retry_count < max_retries and not detection_camera:
+            logger.info(f"Setting up detection camera (fallback) (attempt {retry_count + 1}/{max_retries})")
+            detection_camera = await setup_camera(args.width, args.height, args.fps)
+            
+            if not detection_camera:
+                retry_count += 1
+                if retry_count < max_retries:
+                    logger.warning(f"Failed to setup detection camera, retrying in 2 seconds...")
+                    await asyncio.sleep(2)
+                else:
+                    logger.warning("Failed to setup detection camera, detection features will be limited")
+                    break
+        
+        if detection_camera:
+            # Set detection camera and model in detection_utils
+            set_detection_camera(detection_camera, ort_session)
+            logger.info("Detection camera (fallback) setup successful - independent from WebRTC")
     
     # Start health check task
     health_check_task = asyncio.create_task(health_check())

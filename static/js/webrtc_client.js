@@ -14,13 +14,23 @@ class WebRTCClient {
         this.iceCandidates = [];
         this.isConnected = false;
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 2000; // ms
+        this.maxReconnectAttempts = 999; // Không giới hạn thực tế
+        this.reconnectDelay = 500; // Giảm từ 2000ms xuống 500ms
         this.connectionTimeout = 15000; // ms
         this.connectionTimer = null;
+        this.reconnectTimer = null;
+        this.heartbeatInterval = null;
+        this.isPageVisible = true;
+        this.shouldAutoReconnect = true; // Flag để điều khiển auto-reconnect
         
         // Thiết lập các event handlers cho socket
         this.setupSocketHandlers();
+        
+        // Thiết lập Page Visibility API để giữ kết nối khi chuyển tab
+        this.setupVisibilityHandler();
+        
+        // Thiết lập beforeunload handler
+        this.setupBeforeUnloadHandler();
     }
     
     /**
@@ -166,16 +176,23 @@ class WebRTCClient {
                 this.reconnectAttempts = 0; // Reset số lần thử kết nối lại
                 this.statusCallback('connected');
                 this.clearConnectionTimeout();
+                this.startHeartbeat(); // Bắt đầu heartbeat để giữ kết nối
             } else if (this.peerConnection.connectionState === 'disconnected') {
                 this.isConnected = false;
                 this.statusCallback('disconnected');
-                // Thử kết nối lại sau một khoảng thời gian
-                setTimeout(() => this.handleConnectionFailure(), this.reconnectDelay);
+                this.stopHeartbeat();
+                // Kết nối lại ngay lập tức nếu đang hiển thị trang
+                if (this.isPageVisible && this.shouldAutoReconnect) {
+                    this.scheduleReconnect(this.reconnectDelay);
+                }
             } else if (this.peerConnection.connectionState === 'failed' ||
                        this.peerConnection.connectionState === 'closed') {
                 this.isConnected = false;
                 this.statusCallback('connection_failed');
-                this.handleConnectionFailure();
+                this.stopHeartbeat();
+                if (this.shouldAutoReconnect) {
+                    this.scheduleReconnect(this.reconnectDelay);
+                }
             }
         };
         
@@ -185,8 +202,10 @@ class WebRTCClient {
             
             if (this.peerConnection.iceConnectionState === 'disconnected' ||
                 this.peerConnection.iceConnectionState === 'failed') {
-                // Thử kết nối lại nếu ICE connection thất bại
-                setTimeout(() => this.handleConnectionFailure(), this.reconnectDelay);
+                // Kết nối lại nhanh nếu ICE connection thất bại
+                if (this.shouldAutoReconnect) {
+                    this.scheduleReconnect(this.reconnectDelay);
+                }
             }
         };
         
@@ -243,7 +262,14 @@ class WebRTCClient {
      * Dừng kết nối WebRTC
      */
     stop() {
+        this.shouldAutoReconnect = false; // Tắt auto-reconnect
         this.clearConnectionTimeout();
+        this.stopHeartbeat();
+        
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
         
         if (this.peerConnection) {
             this.peerConnection.close();
@@ -312,19 +338,94 @@ class WebRTCClient {
      * Xử lý khi kết nối thất bại
      */
     handleConnectionFailure() {
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            console.log(`Thử kết nối lại lần ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
-            this.statusCallback('reconnecting', { attempt: this.reconnectAttempts, max: this.maxReconnectAttempts });
+        this.reconnectAttempts++;
+        console.log(`Thử kết nối lại lần ${this.reconnectAttempts}`);
+        this.statusCallback('reconnecting', { attempt: this.reconnectAttempts });
+        
+        // Thử kết nối lại với delay ngắn hơn
+        this.scheduleReconnect(this.reconnectDelay);
+    }
+    
+    /**
+     * Lên lịch kết nối lại
+     */
+    scheduleReconnect(delay) {
+        // Hủy timer cũ nếu có
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+        }
+        
+        // Chỉ reconnect nếu chưa connected và shouldAutoReconnect = true
+        if (!this.isConnected && this.shouldAutoReconnect) {
+            this.reconnectTimer = setTimeout(() => {
+                console.log('Đang kết nối lại...');
+                this.start();
+            }, delay);
+        }
+    }
+    
+    /**
+     * Thiết lập handler cho Page Visibility API
+     * Giữ kết nối khi chuyển tab
+     */
+    setupVisibilityHandler() {
+        document.addEventListener('visibilitychange', () => {
+            this.isPageVisible = !document.hidden;
             
-            // Thử kết nối lại
-            this.start();
-        } else {
-            console.error('Đã vượt quá số lần thử kết nối lại tối đa');
-            this.statusCallback('reconnect_failed');
-            
-            // Dừng kết nối
-            this.stop();
+            if (this.isPageVisible) {
+                console.log('Trang đã hiển thị lại');
+                // Kiểm tra kết nối khi quay lại trang
+                if (!this.isConnected && this.shouldAutoReconnect) {
+                    console.log('Kết nối lại khi quay lại trang...');
+                    this.start();
+                }
+            } else {
+                console.log('Trang đã bị ẩn');
+                // Giữ kết nối ngay cả khi chuyển tab
+                // Không dừng kết nối
+            }
+        });
+    }
+    
+    /**
+     * Thiết lập handler cho beforeunload
+     * Cleanup đúng cách khi đóng trang
+     */
+    setupBeforeUnloadHandler() {
+        window.addEventListener('beforeunload', () => {
+            console.log('Trang sắp được unload');
+            // Tắt auto-reconnect khi user đóng trang
+            this.shouldAutoReconnect = false;
+            this.stopHeartbeat();
+            // Không gọi stop() để tránh cleanup quá sớm
+        });
+    }
+    
+    /**
+     * Bắt đầu heartbeat để giữ kết nối active
+     */
+    startHeartbeat() {
+        this.stopHeartbeat();
+        
+        // Gửi ping mỗi 30 giây để giữ kết nối
+        this.heartbeatInterval = setInterval(() => {
+            if (this.isConnected && this.socket.connected) {
+                this.socket.emit('webrtc_ping', {
+                    device_id: this.deviceId,
+                    timestamp: Date.now()
+                });
+                console.log('Gửi heartbeat ping');
+            }
+        }, 30000); // 30 giây
+    }
+    
+    /**
+     * Dừng heartbeat
+     */
+    stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
         }
     }
 }
