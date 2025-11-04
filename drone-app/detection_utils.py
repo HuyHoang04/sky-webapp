@@ -113,6 +113,15 @@ def detect_objects_from_camera():
     frame = None
     current_mode_is_direct = False
     
+    # Debug: Check detection setup
+    if video_track_ref is None:
+        logger.warning("Detection: video_track_ref is None")
+    if detection_camera is None:
+        logger.warning("Detection: detection_camera is None")
+    if detection_ort_session is None:
+        logger.warning("Detection: detection_ort_session is None")
+        return None, None
+    
     # Try to get frame from video track buffer first (preferred, no camera conflict)
     if video_track_ref and video_track_ref.is_active():
         try:
@@ -124,8 +133,10 @@ def detect_objects_from_camera():
                     logger.info("WebRTC is back! Switching from direct camera to video_track buffer")
                     using_direct_camera = False
                 current_mode_is_direct = False
+            else:
+                logger.debug("Detection: video_track frame_buffer is empty")
         except Exception as e:
-            logger.debug(f"Failed to get frame from video_track: {e}")
+            logger.warning(f"Failed to get frame from video_track: {e}")
     
     # Fallback: Get frame directly from camera if video_track is not available
     if frame is None and detection_camera:
@@ -140,16 +151,14 @@ def detect_objects_from_camera():
                 using_direct_camera = True
                 
         except Exception as e:
-            logger.debug(f"Failed to capture from camera directly: {e}")
+            logger.warning(f"Failed to capture from camera directly: {e}")
             # If we were using direct camera and now it fails, reset the flag
             if using_direct_camera:
                 using_direct_camera = False
             return None, None
     
     if frame is None:
-        return None, None
-    
-    if detection_ort_session is None:
+        logger.warning("Detection: No frame available from any source")
         return None, None
     
     try:

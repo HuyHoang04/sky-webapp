@@ -76,6 +76,7 @@ report_task_runner = None  # Periodic report task
 detection_task_runner = None  # Continuous detection task for real-time updates
 is_restarting_webrtc = False  # Flag to prevent multiple concurrent restarts
 last_restart_time = 0  # Track last restart time to avoid too frequent restarts
+tasks_started = False  # Flag to prevent starting detection tasks multiple times
 
 
 def send_detection_data(detection_data):
@@ -177,9 +178,6 @@ async def create_peer_connection():
     # Create a new RTCPeerConnection with multiple STUN servers for redundancy
     config = RTCConfiguration(
         iceServers=[
-            RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-            RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
-            RTCIceServer(urls=["stun:stun2.l.google.com:19302"]),
             RTCIceServer(urls=["turn:relay1.expressturn.com:3480"], username="000000002076929768", credential="glxmCqGZVm2WqKrB/EXZsf2SZGc="),
         ]
     )
@@ -378,12 +376,27 @@ async def connect():
     
     if video_track is None:
         logger.warning("Video track not ready after 5 seconds, detection tasks may not work properly")
-    else:
-        logger.info("Video track is ready, starting detection tasks")
+        return
+    
+    logger.info("Video track is ready, starting detection tasks")
+    
+    # Ensure detection is setup with current video_track and camera
+    if ort_session and webcam:
+        set_detection_camera(webcam, ort_session, video_track)
+        logger.debug("Detection setup refreshed after connect")
+    
+    # Only start tasks once (prevent duplicate on reconnect)
+    global tasks_started
+    if tasks_started:
+        logger.debug("Detection tasks already running, skipping duplicate start")
+        return
+    
+    tasks_started = True
     
     # Start periodic report task (uses video_track buffer)
     if report_task_runner and not report_task_runner.done():
         report_task_runner.cancel()
+        logger.debug("Cancelled old periodic report task")
     report_task_runner = asyncio.create_task(
         periodic_report_task(sio, device_id, device_name, video_track=None)
     )
@@ -391,7 +404,12 @@ async def connect():
     
     # Start continuous detection task for real-time updates
     if detection_task_runner and not detection_task_runner.done():
+        logger.warning(f"Cancelling old continuous detection task (state: {detection_task_runner._state})")
         detection_task_runner.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(detection_task_runner), timeout=0.5)
+        except:
+            pass
     detection_task_runner = asyncio.create_task(continuous_detection_task())
     logger.info("Started continuous detection task")
 
@@ -399,9 +417,12 @@ async def connect():
 @sio.event
 async def disconnect():
     """Handle Socket.IO disconnection"""
-    global gps_task_runner, report_task_runner
+    global gps_task_runner, report_task_runner, tasks_started
     
     logger.info("Disconnected from server")
+    
+    # Reset tasks_started flag to allow restart on reconnect
+    tasks_started = False
     
     # Don't set running to False here to allow reconnection
     # Just cancel the tasks, they will be restarted on reconnect
