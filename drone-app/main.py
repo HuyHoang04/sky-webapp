@@ -29,6 +29,11 @@ from av import VideoFrame
 from camera_utils import setup_camera, load_onnx_model
 from gps_utils import read_gps, gps_task
 from video_stream import ObjectDetectionStreamTrack
+from detection_utils import (
+    periodic_report_task, on_demand_report,
+    set_report_interval, enable_periodic_report, disable_periodic_report,
+    is_periodic_report_enabled, get_report_interval
+)
 
 # Configure logging
 logging.basicConfig(
@@ -65,6 +70,35 @@ running = True
 ort_session = None
 reconnect_task = None
 video_track = None
+last_detection_emit_time = 0  # Throttle detection data emission
+report_task_runner = None  # Periodic report task
+
+
+def send_detection_data(detection_data):
+    """Callback function to send detection data via Socket.IO"""
+    global last_detection_emit_time
+    
+    # Throttle emissions to every 2 seconds
+    current_time = time.time()
+    if current_time - last_detection_emit_time < 2:
+        return
+    
+    last_detection_emit_time = current_time
+    
+    # Prepare data to send
+    data_to_send = {
+        "device_id": device_id,
+        "device_name": device_name,
+        "earth_person": detection_data["earth_person"],
+        "sea_person": detection_data["sea_person"],
+        "total": detection_data["total"],
+        "timestamp": datetime.now().isoformat(),
+        "detections": detection_data.get("detections", [])
+    }
+    
+    # Emit asynchronously
+    asyncio.create_task(sio.emit("detection_data", data_to_send))
+    logger.debug(f"Sent detection data: Earth={detection_data['earth_person']}, Sea={detection_data['sea_person']}")
 
 
 async def create_peer_connection():
@@ -118,7 +152,10 @@ async def create_peer_connection():
     if webcam:
         # Create a new video track or reuse existing one
         if not video_track:
-            video_track = ObjectDetectionStreamTrack(webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, ort_session)
+            video_track = ObjectDetectionStreamTrack(
+                webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, 
+                ort_session, detection_callback=send_detection_data
+            )
         peer_connection.addTrack(video_track)
         logger.info("Added video track to peer connection")
     else:
@@ -177,6 +214,8 @@ async def restart_webrtc():
 @sio.event
 async def connect():
     """Handle Socket.IO connection"""
+    global gps_task_runner, report_task_runner, running
+    
     logger.info(f"Connected to server as {device_id}")
     
     # Register device
@@ -207,23 +246,41 @@ async def connect():
     
     
     # Start real GPS task
-    global gps_task_runner, running
     if gps_task_runner and not gps_task_runner.done():
-        gps_task.cancel()
+        gps_task_runner.cancel()
     gps_task_runner = asyncio.create_task(gps_task(sio, device_id, device_name, serial_port="/dev/ttyAMA0", baudrate=9600, gps_interval=DEFAULT_GPS_INTERVAL))
     logger.info("Started real GPS task from module gps_utils")
+    
+    # Start periodic detection report task (every 5 minutes = 300 seconds)
+    if report_task_runner and not report_task_runner.done():
+        report_task_runner.cancel()
+    
+    # Wait a bit for video track to be ready
+    await asyncio.sleep(2)
+    
+    if video_track:
+        # Start with default interval from detection_utils
+        report_task_runner = asyncio.create_task(
+            periodic_report_task(sio, device_id, device_name, video_track)
+        )
+        logger.info(f"Started periodic detection report task (default interval, can be configured from UI)")
     
 
 
 @sio.event
 async def disconnect():
     """Handle Socket.IO disconnection"""
+    global gps_task_runner, report_task_runner
+    
     logger.info("Disconnected from server")
     
     # Don't set running to False here to allow reconnection
-    # Just cancel the GPS task, it will be restarted on reconnect
+    # Just cancel the tasks, they will be restarted on reconnect
     if gps_task_runner and not gps_task_runner.done():
         gps_task_runner.cancel()
+    
+    if report_task_runner and not report_task_runner.done():
+        report_task_runner.cancel()
 
 
 @sio.event
@@ -269,6 +326,74 @@ async def webrtc_ice_candidate(data):
         logger.error(f"Error adding ICE candidate: {e}")
 
 
+@sio.event
+async def request_detection_report(data):
+    """Handle request for on-demand detection report"""
+    try:
+        logger.info("Received request for detection report")
+        success = await on_demand_report(sio, device_id, device_name, video_track)
+        if success:
+            await sio.emit('report_status', {'status': 'success', 'device_id': device_id})
+        else:
+            await sio.emit('report_status', {'status': 'failed', 'device_id': device_id})
+    except Exception as e:
+        logger.error(f"Error generating on-demand report: {e}")
+        await sio.emit('report_status', {'status': 'error', 'device_id': device_id, 'error': str(e)})
+
+
+@sio.event
+async def set_report_interval_event(data):
+    """Handle request to change report interval"""
+    try:
+        interval = data.get('interval', 60)
+        if interval < 60:
+            interval = 60  # Minimum 1 minute
+        
+        set_report_interval(interval)
+        
+        await sio.emit('report_config_updated', {
+            'status': 'success',
+            'device_id': device_id,
+            'interval': interval,
+            'enabled': is_periodic_report_enabled()
+        })
+        logger.info(f"Report interval updated to {interval} seconds")
+    except Exception as e:
+        logger.error(f"Error setting report interval: {e}")
+        await sio.emit('report_config_updated', {
+            'status': 'error',
+            'device_id': device_id,
+            'error': str(e)
+        })
+
+
+@sio.event
+async def toggle_periodic_report(data):
+    """Handle request to enable/disable periodic reporting"""
+    try:
+        enabled = data.get('enabled', True)
+        
+        if enabled:
+            enable_periodic_report()
+        else:
+            disable_periodic_report()
+        
+        await sio.emit('report_config_updated', {
+            'status': 'success',
+            'device_id': device_id,
+            'enabled': is_periodic_report_enabled(),
+            'interval': get_report_interval()
+        })
+        logger.info(f"Periodic reporting {'enabled' if enabled else 'disabled'}")
+    except Exception as e:
+        logger.error(f"Error toggling periodic report: {e}")
+        await sio.emit('report_config_updated', {
+            'status': 'error',
+            'device_id': device_id,
+            'error': str(e)
+        })
+
+
 async def health_check():
     """Periodic health check for WebRTC connection"""
     while running:
@@ -290,13 +415,16 @@ async def health_check():
 
 async def cleanup():
     """Clean up resources"""
-    global running, peer_connection, webcam, video_track
+    global running, peer_connection, webcam, video_track, gps_task_runner, report_task_runner
     
     running = False
     
     # Cancel tasks
-    if gps_task and not gps_task.done():
-        gps_task.cancel()
+    if gps_task_runner and not gps_task_runner.done():
+        gps_task_runner.cancel()
+    
+    if report_task_runner and not report_task_runner.done():
+        report_task_runner.cancel()
     
     # Close peer connection
     if peer_connection:

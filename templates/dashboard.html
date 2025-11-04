@@ -111,6 +111,88 @@
     </div>
     
     <div class="row">
+        <!-- AI Detection Panel -->
+        <div class="col-lg-12 mb-4">
+            <div class="card bg-dark text-light border-secondary">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-brain me-2"></i>AI Detection - Phát hiện người</h5>
+                    <div class="d-flex gap-2 align-items-center">
+                        <!-- Auto Report Toggle -->
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="toggleAutoReport" checked>
+                            <label class="form-check-label" for="toggleAutoReport">
+                                <small>Tự động chụp</small>
+                            </label>
+                        </div>
+                        
+                        <!-- Interval Selector -->
+                        <select id="reportInterval" class="form-select form-select-sm" style="width: auto;">
+                            <option value="1">1 phút</option>
+                            <option value="2">2 phút</option>
+                            <option value="3">3 phút</option>
+                            <option value="5">5 phút</option>
+                            <option value="10">10 phút</option>
+                            <option value="15">15 phút</option>
+                            <option value="30">30 phút</option>
+                        </select>
+                        
+                        <button id="requestReport" class="btn btn-sm btn-outline-primary">
+                            <i class="fas fa-camera me-1"></i>Chụp ngay
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <!-- Real-time Detection Stats -->
+                        <div class="col-lg-4 mb-3">
+                            <div id="currentDetection" class="detection-stats-box">
+                                <h6 class="text-center mb-3">Phát hiện hiện tại</h6>
+                                <div class="row text-center">
+                                    <div class="col-4">
+                                        <div class="stat-box earth-stat">
+                                            <div class="stat-icon">🏃</div>
+                                            <div class="stat-label">Earth Person</div>
+                                            <div class="stat-value" id="earthPersonCount">0</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <div class="stat-box sea-stat">
+                                            <div class="stat-icon">🏊</div>
+                                            <div class="stat-label">Sea Person</div>
+                                            <div class="stat-value" id="seaPersonCount">0</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <div class="stat-box total-stat">
+                                            <div class="stat-icon">👥</div>
+                                            <div class="stat-label">Tổng</div>
+                                            <div class="stat-value" id="totalPersonCount">0</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="text-center mt-2">
+                                    <small class="text-muted" id="lastDetectionTime">Chưa có dữ liệu</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Detection History -->
+                        <div class="col-lg-8">
+                            <h6 class="mb-3">Báo cáo đã lưu</h6>
+                            <div id="detectionReportsList" class="report-list" style="max-height: 300px; overflow-y: auto;">
+                                <div class="text-center text-muted p-4">
+                                    <i class="fas fa-folder-open fa-3x mb-3"></i>
+                                    <p>Đang tải báo cáo...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
         <!-- Device Status Panel -->
         <div class="col-lg-4 mb-4">
             <div class="card bg-dark text-light border-secondary">
@@ -291,6 +373,90 @@
     // Load dữ liệu ban đầu
     loadVideoStreams();
     loadGPSData();
+    
+    // Initialize Detection Client
+    const detectionClient = new window.DetectionClient(socket, function(deviceId, data) {
+        // Update current detection display
+        document.getElementById('earthPersonCount').textContent = data.earth_person || 0;
+        document.getElementById('seaPersonCount').textContent = data.sea_person || 0;
+        document.getElementById('totalPersonCount').textContent = data.total || 0;
+        document.getElementById('lastDetectionTime').textContent = 
+            'Cập nhật lúc: ' + new Date(data.timestamp).toLocaleTimeString('vi-VN');
+    });
+    
+    // Load detection reports
+    async function loadDetectionReports() {
+        const reports = await detectionClient.loadReports(20);
+        const reportsList = document.getElementById('detectionReportsList');
+        
+        if (reports.length === 0) {
+            reportsList.innerHTML = `
+                <div class="text-center text-muted p-4">
+                    <i class="fas fa-folder-open fa-3x mb-3"></i>
+                    <p>Chưa có báo cáo nào</p>
+                </div>
+            `;
+            return;
+        }
+        
+        reportsList.innerHTML = '';
+        reports.forEach(report => {
+            const reportItem = detectionClient.createReportItem(report);
+            reportsList.appendChild(reportItem);
+        });
+    }
+    
+    // Load reports on page load
+    loadDetectionReports();
+    
+    // Refresh reports when new snapshot is saved
+    document.addEventListener('detectionSnapshotSaved', function() {
+        loadDetectionReports();
+    });
+    
+    // Request on-demand report
+    document.getElementById('requestReport').addEventListener('click', function() {
+        const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
+        detectionClient.requestReport(deviceId);
+        this.disabled = true;
+        this.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Đang chụp...';
+        
+        // Re-enable after 3 seconds
+        setTimeout(() => {
+            this.disabled = false;
+            this.innerHTML = '<i class="fas fa-camera me-1"></i>Chụp ngay';
+        }, 3000);
+    });
+    
+    // Toggle auto report
+    document.getElementById('toggleAutoReport').addEventListener('change', function() {
+        const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
+        const enabled = this.checked;
+        detectionClient.togglePeriodicReport(deviceId, enabled);
+    });
+    
+    // Change report interval
+    document.getElementById('reportInterval').addEventListener('change', function() {
+        const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
+        const intervalMinutes = parseInt(this.value);
+        detectionClient.setReportInterval(deviceId, intervalMinutes);
+    });
+    
+    // Listen for config updates
+    document.addEventListener('detectionConfigUpdated', function(e) {
+        const data = e.detail;
+        console.log('Detection config updated:', data);
+        
+        // Update UI to reflect current state
+        if (data.enabled !== undefined) {
+            document.getElementById('toggleAutoReport').checked = data.enabled;
+        }
+        
+        if (data.interval !== undefined) {
+            const intervalMinutes = Math.floor(data.interval / 60);
+            document.getElementById('reportInterval').value = intervalMinutes;
+        }
+    });
     
     // Xử lý khi nhận dữ liệu GPS mới
     socket.on('gps_update', function(data) {

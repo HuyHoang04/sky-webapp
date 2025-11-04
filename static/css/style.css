@@ -215,3 +215,414 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #004494;
 }
+
+/* Detection Styles */
+.detection-card {
+  background: white;
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 15px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  transition: transform 0.2s;
+}
+
+.detection-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.detection-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+.detection-header h4 {
+  margin: 0;
+  color: var(--primary-color);
+  font-size: 1.1rem;
+}
+
+.detection-time {
+  color: #6c757d;
+  font-size: 0.9rem;
+}
+
+.detection-stats {
+  display: flex;
+  justify-content: space-around;
+  gap: 10px;
+}
+
+.stat-item {
+  flex: 1;
+  text-align: center;
+  padding: 10px;
+  border-radius: 6px;
+  background: #f8f9fa;
+}
+
+.stat-item.earth-person {
+  border-left: 4px solid #28a745;
+}
+
+.stat-item.sea-person {
+  border-left: 4px solid #007bff;
+}
+
+.stat-item.total {
+  border-left: 4px solid #6c757d;
+}
+
+.stat-icon {
+  font-size: 1.5rem;
+  display: block;
+  margin-bottom: 5px;
+}
+
+.stat-label {
+  display: block;
+  font-size: 0.8rem;
+  color: #6c757d;
+  margin-bottom: 5px;
+}
+
+.stat-value {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #333;
+}
+
+/* Report Item Styles */
+.report-item {
+  display: flex;
+  background: white;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.report-item:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.report-thumbnail {
+  width: 120px;
+  height: 80px;
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.report-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.report-info {
+  flex: 1;
+  padding-left: 15px;
+}
+
+.report-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.report-header h5 {
+  margin: 0;
+  font-size: 1rem;
+  color: #333;
+}
+
+.report-time {
+  font-size: 0.85rem;
+  color: #6c757d;
+}
+
+.report-stats {
+  display: flex;
+  gap: 10px;
+}
+
+.stat-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.stat-badge.earth {
+  background: #d4edda;
+  color: #155724;
+}
+
+.stat-badge.sea {
+  background: #d1ecf1;
+  color: #0c5460;
+}
+
+.stat-badge.total {
+  background: #e2e3e5;
+  color: #383d41;
+}
+
+/* Report Modal */
+.report-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.7);
+}
+
+.modal-content {
+  position: relative;
+  background: white;
+  border-radius: 12px;
+  max-width: 800px;
+  max-height: 90vh;
+  overflow: auto;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: var(--primary-color);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 2rem;
+  color: #6c757d;
+  cursor: pointer;
+  padding: 0;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.modal-close:hover {
+  background: #f8f9fa;
+  color: #333;
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.report-image {
+  width: 100%;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.report-details {
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 6px;
+}
+
+.report-details p {
+  margin: 8px 0;
+  font-size: 1rem;
+}
+
+.report-details strong {
+  color: var(--primary-color);
+  margin-right: 8px;
+}
+
+/* Notification Animation */
+@keyframes slideIn {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOut {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+}
+
+/* Detection Panel */
+#detection-panel {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+#detection-panel h3 {
+  color: var(--primary-color);
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#detection-panel h3::before {
+  content: "🤖";
+  font-size: 1.5rem;
+}
+
+.report-list {
+  max-height: 600px;
+  overflow-y: auto;
+  padding-right: 10px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: #6c757d;
+}
+
+.empty-state-icon {
+  font-size: 4rem;
+  margin-bottom: 20px;
+  opacity: 0.5;
+}
+
+/* Detection Stats Box */
+.detection-stats-box {
+  background: #2c3034;
+  border-radius: 8px;
+  padding: 15px;
+  border: 1px solid #495057;
+}
+
+.stat-box {
+  background: #1a1d20;
+  border-radius: 6px;
+  padding: 15px 10px;
+  text-align: center;
+  transition: all 0.3s;
+}
+
+.stat-box:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.stat-box .stat-icon {
+  font-size: 2rem;
+  margin-bottom: 8px;
+}
+
+.stat-box .stat-label {
+  font-size: 0.75rem;
+  color: #adb5bd;
+  display: block;
+  margin-bottom: 5px;
+}
+
+.stat-box .stat-value {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #fff;
+}
+
+.earth-stat {
+  border-left: 4px solid #28a745;
+}
+
+.sea-stat {
+  border-left: 4px solid #007bff;
+}
+
+.total-stat {
+  border-left: 4px solid #ffc107;
+}
+
+/* Detection Controls */
+.form-check-input:checked {
+  background-color: var(--success-color);
+  border-color: var(--success-color);
+}
+
+.form-select-sm {
+  min-width: 100px;
+  background-color: #2c3034;
+  color: white;
+  border-color: #495057;
+}
+
+.form-select-sm:focus {
+  background-color: #2c3034;
+  color: white;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.form-select-sm option {
+  background-color: #2c3034;
+  color: white;
+}
+
+.card-header .gap-2 {
+  gap: 0.5rem !important;
+}
+
+.form-check-label small {
+  white-space: nowrap;
+}
