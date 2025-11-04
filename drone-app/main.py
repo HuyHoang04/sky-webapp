@@ -111,11 +111,25 @@ async def continuous_detection_task():
     
     logger.info("Started continuous detection task (using video_track buffer)")
     
+    # Wait for video_track to be ready (initial wait)
+    logger.info("Waiting for video_track to be ready...")
+    wait_count = 0
+    while (video_track is None or not video_track.is_active()) and running and wait_count < 30:
+        await asyncio.sleep(1)
+        wait_count += 1
+    
+    if video_track is None or not video_track.is_active():
+        logger.error("Video track not available after waiting, detection task will exit")
+        return
+    
+    logger.info("Video track is ready, starting detection loop")
+    
     while running:
         try:
-            # Wait for video_track to be ready
+            # Check if video_track is still active
             if video_track is None or not video_track.is_active():
-                await asyncio.sleep(1)
+                logger.warning("Video track became inactive, waiting for reconnection...")
+                await asyncio.sleep(2)
                 continue
             
             # Run detection from camera (uses video_track buffer internally)
@@ -295,19 +309,30 @@ async def connect():
     )
     logger.info("Started GPS task")
     
-    # Start periodic report task (independent from WebRTC)
+    # Wait for video_track to be created (max 5 seconds)
+    wait_count = 0
+    while video_track is None and wait_count < 50:
+        await asyncio.sleep(0.1)
+        wait_count += 1
+    
+    if video_track is None:
+        logger.warning("Video track not ready after 5 seconds, detection tasks may not work properly")
+    else:
+        logger.info("Video track is ready, starting detection tasks")
+    
+    # Start periodic report task (uses video_track buffer)
     if report_task_runner and not report_task_runner.done():
         report_task_runner.cancel()
     report_task_runner = asyncio.create_task(
         periodic_report_task(sio, device_id, device_name, video_track=None)
     )
-    logger.info("Started periodic detection report task (independent from WebRTC)")
+    logger.info("Started periodic detection report task")
     
     # Start continuous detection task for real-time updates
     if detection_task_runner and not detection_task_runner.done():
         detection_task_runner.cancel()
     detection_task_runner = asyncio.create_task(continuous_detection_task())
-    logger.info("Started continuous detection task (independent from WebRTC)")
+    logger.info("Started continuous detection task")
 
 
 @sio.event
