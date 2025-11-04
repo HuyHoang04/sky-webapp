@@ -74,6 +74,8 @@ video_track = None
 last_detection_emit_time = 0  # Throttle detection data emission
 report_task_runner = None  # Periodic report task
 detection_task_runner = None  # Continuous detection task for real-time updates
+is_restarting_webrtc = False  # Flag to prevent multiple concurrent restarts
+last_restart_time = 0  # Track last restart time to avoid too frequent restarts
 
 
 def send_detection_data(detection_data):
@@ -190,10 +192,10 @@ async def create_peer_connection():
         state = peer_connection.connectionState
         logger.info(f"PeerConnection state: {state}")
         
-        if state == "failed" or state == "closed":
-            # Connection failed, try to restart
-            logger.warning("WebRTC connection failed or closed, will attempt to restart")
-            await asyncio.sleep(1)
+        if state == "failed":
+            # Connection failed, try to restart (with delay to avoid loop)
+            logger.warning("WebRTC connection failed, will attempt to restart in 3 seconds")
+            await asyncio.sleep(3)
             await restart_webrtc()
     
     # Log ICE connection state changes
@@ -263,8 +265,23 @@ async def create_offer():
 
 
 async def restart_webrtc():
-    """Restart the WebRTC connection"""
-    global peer_connection
+    """Restart the WebRTC connection with lock to prevent concurrent restarts"""
+    global peer_connection, is_restarting_webrtc, last_restart_time
+    
+    # Check if already restarting
+    if is_restarting_webrtc:
+        logger.debug("WebRTC restart already in progress, skipping")
+        return
+    
+    # Check if restarted too recently (cooldown: 5 seconds)
+    current_time = time.time()
+    if current_time - last_restart_time < 5:
+        logger.debug("WebRTC restarted too recently, skipping")
+        return
+    
+    # Set lock
+    is_restarting_webrtc = True
+    last_restart_time = current_time
     
     logger.info("Restarting WebRTC connection")
     
@@ -273,9 +290,12 @@ async def restart_webrtc():
         if peer_connection:
             try:
                 await peer_connection.close()
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Error closing old peer connection: {e}")
             peer_connection = None
+        
+        # Wait a bit for cleanup
+        await asyncio.sleep(0.5)
         
         # Create new peer connection
         await create_peer_connection()
@@ -290,8 +310,14 @@ async def restart_webrtc():
             'sdp': offer['sdp'],
             'type': offer['type']
         })
+        
+        logger.info("WebRTC restart completed successfully")
+        
     except Exception as e:
         logger.error(f"Failed to restart WebRTC: {e}")
+    finally:
+        # Release lock
+        is_restarting_webrtc = False
 
 
 @sio.event
@@ -491,16 +517,20 @@ async def toggle_periodic_report(data):
 
 async def health_check():
     """Periodic health check for WebRTC connection"""
+    global is_restarting_webrtc
+    
     while running:
         try:
-            if peer_connection and peer_connection.connectionState not in ["connected", "connecting"]:
-                logger.warning(f"WebRTC connection in unhealthy state: {peer_connection.connectionState}")
-                await restart_webrtc()
-            
-            # Check if video track is working
-            if video_track and not video_track.is_active():
-                logger.warning("Video track is not active, attempting to restart")
-                await restart_webrtc()
+            # Skip health check if restart is in progress
+            if not is_restarting_webrtc:
+                if peer_connection and peer_connection.connectionState == "failed":
+                    logger.warning(f"WebRTC connection in unhealthy state: {peer_connection.connectionState}")
+                    await restart_webrtc()
+                
+                # Check if video track is working
+                elif video_track and not video_track.is_active():
+                    logger.warning("Video track is not active, attempting to restart")
+                    await restart_webrtc()
                 
         except Exception as e:
             logger.error(f"Error in health check: {e}")
