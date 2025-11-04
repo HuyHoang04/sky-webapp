@@ -164,7 +164,6 @@ async def continuous_detection_task():
         except Exception as e:
             logger.error(f"Error in continuous detection task: {e}", exc_info=True)
             await asyncio.sleep(1)  # Wait before retrying
-    logger.debug(f"Sent detection data: Earth={detection_data['earth_person']}, Sea={detection_data['sea_person']}")
 
 
 async def create_peer_connection():
@@ -222,11 +221,12 @@ async def create_peer_connection():
                 webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, 
                 ort_session, detection_callback=send_detection_data
             )
-            
-            # Set detection camera reference (share webcam and video_track, no separate camera)
-            if ort_session:
-                set_detection_camera(webcam, ort_session, video_track)
-                logger.info("Detection setup complete - sharing camera with WebRTC (no conflict)")
+            logger.info("Created new video track")
+        
+        # Always update detection camera reference (important for restarts)
+        if ort_session:
+            set_detection_camera(webcam, ort_session, video_track)
+            logger.debug("Detection setup updated - sharing camera with WebRTC (no conflict)")
         
         peer_connection.addTrack(video_track)
         logger.info("Added video track to peer connection")
@@ -266,7 +266,7 @@ async def create_offer():
 
 async def restart_webrtc():
     """Restart the WebRTC connection with lock to prevent concurrent restarts"""
-    global peer_connection, is_restarting_webrtc, last_restart_time
+    global peer_connection, video_track, is_restarting_webrtc, last_restart_time
     
     # Check if already restarting
     if is_restarting_webrtc:
@@ -286,6 +286,14 @@ async def restart_webrtc():
     logger.info("Restarting WebRTC connection")
     
     try:
+        # Stop old video track if exists (but don't close camera)
+        if video_track:
+            try:
+                video_track.stop()
+            except Exception as e:
+                logger.debug(f"Error stopping old video track: {e}")
+            video_track = None  # Force creation of new track
+        
         # Close old peer connection if exists
         if peer_connection:
             try:
@@ -297,7 +305,7 @@ async def restart_webrtc():
         # Wait a bit for cleanup
         await asyncio.sleep(0.5)
         
-        # Create new peer connection
+        # Create new peer connection (this will also create new video_track)
         await create_peer_connection()
         
         # Create a new offer
@@ -561,9 +569,13 @@ async def cleanup():
         video_track.stop()
         video_track = None
     
-    # Release webcam
+    # Stop and release webcam (Picamera2)
     if webcam:
-        webcam.release()
+        try:
+            webcam.stop()
+            webcam.close()
+        except Exception as e:
+            logger.debug(f"Error stopping webcam: {e}")
         webcam = None
     
     # Disconnect from server
