@@ -174,6 +174,8 @@ async def create_peer_connection():
     # Create a new RTCPeerConnection with multiple STUN servers for redundancy
     config = RTCConfiguration(
         iceServers=[
+            RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+            RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
             RTCIceServer(urls=["turn:relay1.expressturn.com:3480"], username="000000002076929768", credential="glxmCqGZVm2WqKrB/EXZsf2SZGc="),
         ]
     )
@@ -383,37 +385,37 @@ async def connect():
     if ort_session and webcam:
         set_detection_camera(webcam, ort_session, video_track)
         logger.info("Detection setup refreshed after connect")
+        
+        # Only start tasks once (prevent duplicate on reconnect)
+        global tasks_started
+        if tasks_started:
+            logger.debug("Detection tasks already running, skipping duplicate start")
+            return
+        
+        tasks_started = True
+        
+        # Start periodic report task (uses video_track buffer)
+        if report_task_runner and not report_task_runner.done():
+            report_task_runner.cancel()
+            logger.debug("Cancelled old periodic report task")
+        report_task_runner = asyncio.create_task(
+            periodic_report_task(sio, device_id, device_name, video_track=None)
+        )
+        logger.info("Started periodic detection report task")
+        
+        # Start continuous detection task for real-time updates
+        if detection_task_runner and not detection_task_runner.done():
+            logger.warning(f"Cancelling old continuous detection task (state: {detection_task_runner._state})")
+            detection_task_runner.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(detection_task_runner), timeout=0.5)
+            except:
+                pass
+        detection_task_runner = asyncio.create_task(continuous_detection_task())
+        logger.info("Started continuous detection task")
     else:
-        logger.error(f"Cannot setup detection: ort_session={ort_session is not None}, webcam={webcam is not None}")
-        return
-    
-    # Only start tasks once (prevent duplicate on reconnect)
-    global tasks_started
-    if tasks_started:
-        logger.debug("Detection tasks already running, skipping duplicate start")
-        return
-    
-    tasks_started = True
-    
-    # Start periodic report task (uses video_track buffer)
-    if report_task_runner and not report_task_runner.done():
-        report_task_runner.cancel()
-        logger.debug("Cancelled old periodic report task")
-    report_task_runner = asyncio.create_task(
-        periodic_report_task(sio, device_id, device_name, video_track=None)
-    )
-    logger.info("Started periodic detection report task")
-    
-    # Start continuous detection task for real-time updates
-    if detection_task_runner and not detection_task_runner.done():
-        logger.warning(f"Cancelling old continuous detection task (state: {detection_task_runner._state})")
-        detection_task_runner.cancel()
-        try:
-            await asyncio.wait_for(asyncio.shield(detection_task_runner), timeout=0.5)
-        except:
-            pass
-    detection_task_runner = asyncio.create_task(continuous_detection_task())
-    logger.info("Started continuous detection task")
+        logger.warning(f"Detection disabled: ort_session={ort_session is not None}, webcam={webcam is not None}")
+        logger.info("WebRTC video streaming will continue without object detection")
 
 
 @sio.event
