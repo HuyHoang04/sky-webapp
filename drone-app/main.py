@@ -66,7 +66,6 @@ device_id = DEFAULT_DEVICE_ID
 device_name = DEFAULT_DEVICE_NAME
 relay = MediaRelay()
 webcam = None
-detection_camera = None  # Separate camera for detection (fallback)
 gps_task_runner = None
 running = True
 ort_session = None
@@ -106,15 +105,20 @@ def send_detection_data(detection_data):
 async def continuous_detection_task():
     """
     Continuous task to run detection and send real-time updates
-    Independent from WebRTC, uses fallback camera
+    Uses video_track's frame buffer - no camera conflict
     """
-    global running, last_detection_emit_time
+    global running, last_detection_emit_time, video_track
     
-    logger.info("Started continuous detection task (independent from WebRTC)")
+    logger.info("Started continuous detection task (using video_track buffer)")
     
     while running:
         try:
-            # Run detection from camera
+            # Wait for video_track to be ready
+            if video_track is None or not video_track.is_active():
+                await asyncio.sleep(1)
+                continue
+            
+            # Run detection from camera (uses video_track buffer internally)
             frame, detection_data = detect_objects_from_camera()
             
             if detection_data:
@@ -188,6 +192,12 @@ async def create_peer_connection():
                 webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, 
                 ort_session, detection_callback=send_detection_data
             )
+            
+            # Set detection camera reference (share webcam and video_track, no separate camera)
+            if ort_session:
+                set_detection_camera(webcam, ort_session, video_track)
+                logger.info("Detection setup complete - sharing camera with WebRTC (no conflict)")
+        
         peer_connection.addTrack(video_track)
         logger.info("Added video track to peer connection")
     else:
@@ -481,7 +491,7 @@ async def cleanup():
 
 async def main():
     """Main function"""
-    global webcam, detection_camera, ort_session, running, device_id, device_name, gps_task_runner, running
+    global webcam, ort_session, running, device_id, device_name, gps_task_runner, running
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Drone App Client")
@@ -529,27 +539,6 @@ async def main():
                 return
     
     logger.info("WebRTC camera setup successful")
-    
-    # Setup separate detection camera (fallback, independent from WebRTC)
-    if ort_session:
-        retry_count = 0
-        while retry_count < max_retries and not detection_camera:
-            logger.info(f"Setting up detection camera (fallback) (attempt {retry_count + 1}/{max_retries})")
-            detection_camera = await setup_camera(args.width, args.height, args.fps)
-            
-            if not detection_camera:
-                retry_count += 1
-                if retry_count < max_retries:
-                    logger.warning(f"Failed to setup detection camera, retrying in 2 seconds...")
-                    await asyncio.sleep(2)
-                else:
-                    logger.warning("Failed to setup detection camera, detection features will be limited")
-                    break
-        
-        if detection_camera:
-            # Set detection camera and model in detection_utils
-            set_detection_camera(detection_camera, ort_session)
-            logger.info("Detection camera (fallback) setup successful - independent from WebRTC")
     
     # Start health check task
     health_check_task = asyncio.create_task(health_check())

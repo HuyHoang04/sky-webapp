@@ -15,8 +15,9 @@ logger = logging.getLogger("drone-client")
 # Global control variables
 periodic_report_enabled = True
 report_interval = 60  # Default 1 minute (60 seconds)
-detection_camera = None  # Independent camera for detection
+detection_camera = None  # Shared camera reference (not a separate instance)
 detection_ort_session = None  # ONNX model session
+video_track_ref = None  # Reference to video track for frame buffer access
 latest_detection_data = {
     "earth_person": 0,
     "sea_person": 0,
@@ -31,12 +32,19 @@ CONFIDENCE_THRESHOLD = 0.5
 NMS_IOU_THRESHOLD = 0.45
 
 
-def set_detection_camera(camera, ort_session):
-    """Set the camera and model for detection (fallback, independent from WebRTC)"""
-    global detection_camera, detection_ort_session
+def set_detection_camera(camera, ort_session, video_track=None):
+    """
+    Set the camera and model for detection
+    Args:
+        camera: Camera instance (shared with WebRTC)
+        ort_session: ONNX model session
+        video_track: Video track instance for frame buffer access
+    """
+    global detection_camera, detection_ort_session, video_track_ref
     detection_camera = camera
     detection_ort_session = ort_session
-    logger.info("Detection camera and model set (independent from WebRTC)")
+    video_track_ref = video_track
+    logger.info("Detection camera and model set (shared with WebRTC, no conflict)")
 
 
 def get_latest_detection():
@@ -95,28 +103,35 @@ def compute_iou(box1, box2):
 
 def detect_objects_from_camera():
     """
-    Capture frame from camera and run detection
+    Get frame from video track buffer and run detection
+    No direct camera access to avoid conflicts
     Returns: (frame, detection_data) or (None, None) if failed
     """
-    global detection_camera, detection_ort_session, latest_detection_data
+    global detection_camera, detection_ort_session, video_track_ref, latest_detection_data
     
-    if detection_camera is None or detection_ort_session is None:
+    # Use video track's frame buffer instead of direct camera access
+    if video_track_ref is None or not video_track_ref.is_active():
+        logger.warning("Video track not available for detection")
+        return None, None
+    
+    if detection_ort_session is None:
+        logger.warning("ONNX session not available for detection")
         return None, None
     
     try:
-        # Capture frame from camera
-        frame = detection_camera.capture_array()
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        # Get frame from video track buffer (no camera conflict)
+        frame = video_track_ref.frame_buffer.get_latest_frame()
         
         if frame is None:
+            logger.warning("No frame available in buffer")
             return None, None
         
-        # Run detection
-        img = frame.copy()
-        original_height, original_width = img.shape[:2]
+        # Make a copy to avoid modifying the original
+        frame = frame.copy()
+        original_height, original_width = frame.shape[:2]
         
         # Preprocess for ONNX model (YOLOv8 expects 640x640)
-        img_resized = cv2.resize(img, (640, 640))
+        img_resized = cv2.resize(frame, (640, 640))
         img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
         img_normalized = img_rgb.astype(np.float32) / 255.0
         img_transposed = np.transpose(img_normalized, (2, 0, 1))
