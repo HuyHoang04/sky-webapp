@@ -238,8 +238,8 @@ async def create_offer():
     """Create a WebRTC offer with proper ICE gathering"""
     global peer_connection
     
-    # Ensure we have a peer connection
-    if not peer_connection:
+    # Ensure we have a peer connection and it's not closed
+    if not peer_connection or peer_connection.connectionState == "closed":
         await create_peer_connection()
     
     # Create offer
@@ -264,9 +264,22 @@ async def create_offer():
 
 async def restart_webrtc():
     """Restart the WebRTC connection"""
+    global peer_connection
+    
     logger.info("Restarting WebRTC connection")
     
     try:
+        # Close old peer connection if exists
+        if peer_connection:
+            try:
+                await peer_connection.close()
+            except:
+                pass
+            peer_connection = None
+        
+        # Create new peer connection
+        await create_peer_connection()
+        
         # Create a new offer
         offer = await create_offer()
         
