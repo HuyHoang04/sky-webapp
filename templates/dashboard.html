@@ -111,7 +111,49 @@
     </div>
     
     <div class="row">
-        <!-- Device Status Panel -->
+        <!-- Call Panel -->
+        <div class="col-lg-4 mb-4">
+            <div class="card bg-dark text-light border-secondary">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-phone me-2"></i>Cuộc gọi</h5>
+                </div>
+                <div class="card-body">
+                    <div id="callPanel" class="d-none">
+                        <div class="text-center mb-3">
+                            <h4 id="callerNumber" class="mb-2">Unknown Caller</h4>
+                            <p id="callStatus" class="text-muted">Đang gọi đến...</p>
+                            <p id="callDuration" class="text-muted">00:00</p>
+                        </div>
+                        <div class="d-flex justify-content-center mb-3">
+                            <button id="acceptCall" class="btn btn-success me-2">
+                                <i class="fas fa-phone"></i> Trả lời
+                            </button>
+                            <button id="declineCall" class="btn btn-danger">
+                                <i class="fas fa-phone-slash"></i> Từ chối
+                            </button>
+                            <button id="endCall" class="btn btn-danger d-none">
+                                <i class="fas fa-phone-slash"></i> Kết thúc
+                            </button>
+                        </div>
+                        <div class="form-group">
+                            <label for="callNote">Ghi chú cuộc gọi:</label>
+                            <textarea id="callNote" class="form-control bg-dark text-light" rows="3"></textarea>
+                        </div>
+                        <div class="mt-3">
+                            <small class="text-muted">
+                                <i class="fas fa-map-marker-alt me-1"></i>
+                                Vị trí hiện tại: <span id="callLocation">--</span>
+                            </small>
+                        </div>
+                    </div>
+                    <div id="noCallPanel" class="text-center">
+                        <p class="text-muted">Không có cuộc gọi</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <!-- Device Status Panel -->
         <div class="col-lg-4 mb-4">
             <div class="card bg-dark text-light border-secondary">
                 <div class="card-header">
@@ -497,6 +539,107 @@
         }
     });
     
+    // Xử lý cuộc gọi
+    let currentCall = null;
+    let callStartTime = null;
+    let callDurationInterval = null;
+
+    function updateCallDuration() {
+        if (callStartTime) {
+            const duration = Math.floor((Date.now() - callStartTime) / 1000);
+            const minutes = Math.floor(duration / 60).toString().padStart(2, '0');
+            const seconds = (duration % 60).toString().padStart(2, '0');
+            document.getElementById('callDuration').textContent = `${minutes}:${seconds}`;
+        }
+    }
+
+    function showCallPanel(show) {
+        document.getElementById('callPanel').classList.toggle('d-none', !show);
+        document.getElementById('noCallPanel').classList.toggle('d-none', show);
+    }
+
+    function resetCallUI() {
+        document.getElementById('callerNumber').textContent = 'Unknown Caller';
+        document.getElementById('callStatus').textContent = 'Đang gọi đến...';
+        document.getElementById('callDuration').textContent = '00:00';
+        document.getElementById('callNote').value = '';
+        document.getElementById('callLocation').textContent = '--';
+        
+        document.getElementById('acceptCall').classList.remove('d-none');
+        document.getElementById('declineCall').classList.remove('d-none');
+        document.getElementById('endCall').classList.add('d-none');
+        
+        if (callDurationInterval) {
+            clearInterval(callDurationInterval);
+            callDurationInterval = null;
+        }
+        callStartTime = null;
+    }
+
+    // Xử lý khi có cuộc gọi đến
+    socket.on('incoming_call', function(data) {
+        currentCall = data;
+        document.getElementById('callerNumber').textContent = data.phoneNumber;
+        showCallPanel(true);
+        resetCallUI();
+    });
+
+    // Xử lý khi nhận cuộc gọi
+    document.getElementById('acceptCall').addEventListener('click', function() {
+        if (currentCall) {
+            socket.emit('accept_call', { callId: currentCall.id });
+            document.getElementById('callStatus').textContent = 'Đang gọi';
+            document.getElementById('acceptCall').classList.add('d-none');
+            document.getElementById('declineCall').classList.add('d-none');
+            document.getElementById('endCall').classList.remove('d-none');
+            
+            callStartTime = Date.now();
+            callDurationInterval = setInterval(updateCallDuration, 1000);
+        }
+    });
+
+    // Xử lý khi từ chối cuộc gọi
+    document.getElementById('declineCall').addEventListener('click', function() {
+        if (currentCall) {
+            socket.emit('decline_call', { callId: currentCall.id });
+            currentCall = null;
+            showCallPanel(false);
+            resetCallUI();
+        }
+    });
+
+    // Xử lý khi kết thúc cuộc gọi
+    document.getElementById('endCall').addEventListener('click', function() {
+        if (currentCall) {
+            const note = document.getElementById('callNote').value;
+            socket.emit('end_call', { 
+                callId: currentCall.id,
+                note: note,
+                duration: Math.floor((Date.now() - callStartTime) / 1000)
+            });
+            currentCall = null;
+            showCallPanel(false);
+            resetCallUI();
+        }
+    });
+
+    // Xử lý khi cuộc gọi kết thúc từ phía bên kia
+    socket.on('call_ended', function(data) {
+        if (currentCall && currentCall.id === data.callId) {
+            currentCall = null;
+            showCallPanel(false);
+            resetCallUI();
+        }
+    });
+
+    // Xử lý khi nhận được vị trí GPS mới trong cuộc gọi
+    socket.on('call_location_update', function(data) {
+        if (currentCall && currentCall.id === data.callId) {
+            document.getElementById('callLocation').textContent = 
+                `${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}`;
+        }
+    });
+
     // Xử lý khi thiết bị được thêm mới
     socket.on('video_device_added', function(data) {
         console.log('Thiết bị video mới:', data);
