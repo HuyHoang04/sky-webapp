@@ -1,0 +1,22 @@
+.mission-tools .btn-outline-light {
+    transition: all 0.2s ease-in-out;
+    border-color: var(--gray-200);
+}
+
+.mission-tools .btn-outline-light:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: var(--gray-300);
+    transform: translateY(-1px);
+}
+
+.mission-tools .btn-outline-light.active {
+    background-color: var(--secondary-color);
+    border-color: var(--secondary-color);
+    color: var(--dark-color);
+}
+
+.mission-tools .btn-outline-light.active:hover {
+    background-color: var(--secondary-color);
+    border-color: var(--secondary-color);
+    filter: brightness(110%);
+}

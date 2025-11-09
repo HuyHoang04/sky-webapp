@@ -3,37 +3,77 @@
 {% block title %}Trang chủ{% endblock %}
 
 {% block content %}
-<div class="container">
-    <div class="row justify-content-center">
-        <div class="col-md-8 text-center">
-            <h1 class="display-4 mb-4">Hệ thống giám sát Sky WebApp</h1>
-            <p class="lead">Hệ thống giám sát video và GPS real-time cho drone và phao cứu hộ</p>
+<section class="home-section">
+    <div class="container">
+        <div class="home-content text-center">
+            <h1 class="home-title animate-title">SkyAid Control Center</h1>
+            <p class="home-description animate-description">Hệ thống điều khiển và giám sát drone thế hệ mới với khả năng theo dõi GPS và video stream thời gian thực</p>
             
-            <div class="mt-5">
-                <a href="/dashboard" class="btn btn-primary btn-lg px-4 me-md-2">
-                    <i class="fas fa-tachometer-alt me-2"></i>Truy cập Dashboard
+            <div class="mb-5 animate-button">
+                <a href="/dashboard" class="btn btn-primary cta-button">
+                    <i class="fas fa-tachometer-alt me-2"></i>Launch Control Center
                 </a>
             </div>
             
-            <div class="row mt-5">
-                <div class="col-md-6">
-                    <div class="card bg-dark text-light border-secondary mb-4">
-                        <div class="card-body">
-                            <h5 class="card-title"><i class="fas fa-video me-2"></i>Video Streaming</h5>
-                            <p class="card-text">Xem video trực tiếp từ drone thông qua Raspberry Pi với độ trễ thấp</p>
-                        </div>
+            <div class="row mt-5 g-4 animate-cards">
+                <div class="col-md-4 col-lg-3">
+                    <div class="feature-card text-center">
+                        <i class="fas fa-video feature-icon"></i>
+                        <h3 class="h5 mb-3">Real-time Video</h3>
+                        <p class="mb-0 text-muted">Stream video trực tiếp từ drone với độ trễ cực thấp qua WebRTC</p>
                     </div>
                 </div>
-                <div class="col-md-6">
-                    <div class="card bg-dark text-light border-secondary mb-4">
-                        <div class="card-body">
-                            <h5 class="card-title"><i class="fas fa-map-marker-alt me-2"></i>Theo dõi GPS</h5>
-                            <p class="card-text">Theo dõi vị trí GPS real-time của drone và phao cứu hộ</p>
-                        </div>
+                <div class="col-md-4 col-lg-3">
+                    <div class="feature-card text-center">
+                        <i class="fas fa-map-marked-alt feature-icon"></i>
+                        <h3 class="h5 mb-3">GPS Tracking</h3>
+                        <p class="mb-0 text-muted">Theo dõi vị trí chính xác và lộ trình bay của drone theo thời gian thực</p>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3">
+                    <div class="feature-card text-center">
+                        <i class="fas fa-life-ring feature-icon"></i>
+                        <h3 class="h5 mb-3">Smart Lifebuoy</h3>
+                        <p class="mb-0 text-muted">Tích hợp điều khiển phao cứu hộ thông minh với khả năng tự động</p>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3">
+                    <div class="feature-card text-center">
+                        <i class="fas fa-route feature-icon"></i>
+                        <h3 class="h5 mb-3">Flight Planning</h3>
+                        <p class="mb-0 text-muted">Lập kế hoạch bay thông minh với waypoints và quỹ đạo tự động</p>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3">
+                    <div class="feature-card text-center">
+                        <i class="fas fa-tasks feature-icon"></i>
+                        <h3 class="h5 mb-3">Mission Management</h3>
+                        <p class="mb-0 text-muted">Quản lý nhiệm vụ drone với lập lịch và theo dõi tiến độ trực quan</p>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3">
+                    <div class="feature-card text-center">
+                        <i class="fas fa-database feature-icon"></i>
+                        <h3 class="h5 mb-3">Data Collection</h3>
+                        <p class="mb-0 text-muted">Thu thập và phân tích dữ liệu từ các cảm biến theo thời gian thực</p>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3">
+                    <div class="feature-card text-center">
+                        <i class="fas fa-helicopter feature-icon"></i>
+                        <h3 class="h5 mb-3">Fleet Management</h3>
+                        <p class="mb-0 text-muted">Quản lý đội bay với theo dõi bảo trì và lịch sử hoạt động</p>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3">
+                    <div class="feature-card text-center">
+                        <i class="fas fa-shield-alt feature-icon"></i>
+                        <h3 class="h5 mb-3">Safety & Compliance</h3>
+                        <p class="mb-0 text-muted">Đảm bảo an toàn và tuân thủ quy định hàng không dân dụng</p>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-</div>
+</section>
 {% endblock %}
