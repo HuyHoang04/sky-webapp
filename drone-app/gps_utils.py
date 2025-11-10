@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger("drone-client")
 
 
-async def read_gps(serial_port="/dev/ttyAMA0", baudrate=9600):
+async def read_gps(serial_port="/dev/ttyAMA3", baudrate=9600):
     """Async generator: yield GPS data dict from NMEA sentences"""
     reader, _ = await serial_asyncio.open_serial_connection(url=serial_port, baudrate=baudrate)
    
@@ -35,7 +35,7 @@ async def read_gps(serial_port="/dev/ttyAMA0", baudrate=9600):
             logger.warning(f"GPS parse error: {e}")
 
 
-async def gps_task(sio, device_id, device_name, serial_port="/dev/ttyAMA0", baudrate=9600, gps_interval=1.0):
+async def gps_task(sio, device_id, device_name, serial_port="/dev/ttyAMA3", baudrate=9600, gps_interval=1.0):
     """Send real GPS data to server"""
     async for gps in read_gps(serial_port, baudrate):
         gps["device_id"] = device_id
