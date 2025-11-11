@@ -81,7 +81,7 @@
                                     <i class="fas fa-camera me-2"></i> Camera Source
                                 </button>
                                 <ul class="dropdown-menu dropdown-menu-end" id="videoSourceList">
-                                    <li><a class="dropdown-item disabled" href="#">No devices found</a></li>
+                                    <!-- Device options will be populated by VideoLayoutManager -->
                                 </ul>
                             </div>
                             <span class="badge bg-success" id="streamStatus">Ready</span>
@@ -91,26 +91,7 @@
                 <div class="card-body p-0">
                     <div class="video-container" id="videoContainer">
                         <div class="video-grid" id="videoGrid">
-                            <div class="video-cell active" data-drone="drone1">
-                                <video id="videoStream1" autoplay playsinline></video>
-                                <div class="video-stats">
-                                    <div>
-                                        <i class="fas fa-signal"></i>
-                                        <span id="connectionQuality1">Excellent</span>
-                                    </div>
-                                </div>
-                                <div class="video-label">Drone 1</div>
-                            </div>
-                            <div class="video-cell" data-drone="drone2">
-                                <video id="videoStream2" autoplay playsinline></video>
-                                <div class="video-stats">
-                                    <div>
-                                        <i class="fas fa-signal"></i>
-                                        <span id="connectionQuality2">Good</span>
-                                    </div>
-                                </div>
-                                <div class="video-label">Drone 2</div>
-                            </div>
+                            <!-- Video cells will be dynamically created by VideoLayoutManager -->
                         </div>
                         <div class="video-controls">
                             <div class="d-flex gap-2">
@@ -134,9 +115,7 @@
                                     <ul class="dropdown-menu dropdown-menu-dark" id="viewLayoutList">
                                         <li><a class="dropdown-item active" href="#" data-layout="single"><i class="fas fa-square me-2"></i>Single View</a></li>
                                         <li><a class="dropdown-item" href="#" data-layout="grid"><i class="fas fa-th me-2"></i>Grid View</a></li>
-                                        <li><hr class="dropdown-divider"></li>
-                                        <li><a class="dropdown-item" href="#" data-layout="drone1"><i class="fas fa-drone me-2"></i>Drone 1</a></li>
-                                        <li><a class="dropdown-item" href="#" data-layout="drone2"><i class="fas fa-drone me-2"></i>Drone 2</a></li>
+                                        <!-- Dynamic device-specific layout options will be added here -->
                                     </ul>
                                 </div>
                             </div>
@@ -540,12 +519,12 @@
     });
     
     // Xử lý WebRTC
-    const videoElement = document.getElementById('videoStream');
     const startStreamButton = document.getElementById('startStream');
     const stopStreamButton = document.getElementById('stopStream');
     const streamStatus = document.getElementById('streamStatus');
     
     let peerConnection;
+    let currentVideoElement = null;
     
     // Khởi tạo kết nối WebRTC
     async function startWebRTC(deviceId) {
@@ -576,7 +555,20 @@
             // Xử lý khi nhận được track
             peerConnection.ontrack = event => {
                 console.log('Received video track');
-                videoElement.srcObject = event.streams[0];
+                
+                // Get the active video element from VideoLayoutManager
+                if (window.videoLayoutManager) {
+                    const activeVideoElement = window.videoLayoutManager.getActiveVideoElement();
+                    if (activeVideoElement) {
+                        activeVideoElement.srcObject = event.streams[0];
+                        currentVideoElement = activeVideoElement;
+                    } else {
+                        console.warn('No active video element found');
+                    }
+                } else {
+                    console.warn('VideoLayoutManager not available');
+                }
+                
                 streamStatus.textContent = 'Đang phát';
                 streamStatus.className = 'badge bg-success';
             };
@@ -666,7 +658,11 @@
             peerConnection = null;
         }
         
-        videoElement.srcObject = null;
+        if (currentVideoElement) {
+            currentVideoElement.srcObject = null;
+            currentVideoElement = null;
+        }
+        
         streamStatus.textContent = 'Đã dừng';
         streamStatus.className = 'badge bg-secondary';
     });
@@ -698,7 +694,10 @@
             if (peerConnection) {
                 peerConnection.close();
                 peerConnection = null;
-                videoElement.srcObject = null;
+                if (currentVideoElement) {
+                    currentVideoElement.srcObject = null;
+                    currentVideoElement = null;
+                }
             }
             
             // Bắt đầu stream mới
