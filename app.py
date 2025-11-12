@@ -12,10 +12,14 @@ app.register_blueprint(main_blueprint)
 # Import các blueprint khác sau khi đã tạo app
 from controller.video_controller import video_blueprint
 from controller.gps_controller import gps_blueprint
+from controller.mission_controller import mission_blueprint
+from controller.detection_controller import detection_blueprint
 
 # Đăng ký các blueprint còn lại
 app.register_blueprint(video_blueprint)
 app.register_blueprint(gps_blueprint)
+app.register_blueprint(mission_blueprint)
+app.register_blueprint(detection_blueprint)
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)
