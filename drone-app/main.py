@@ -17,6 +17,7 @@ import nest_asyncio
 import cv2
 import numpy as np
 import socketio
+import inspect
 from aiortc import (
     RTCConfiguration,
     RTCIceServer,
@@ -68,6 +69,7 @@ reconnect_task = None
 video_track = None
 capture_server_task = None
 pending_remote_ice = []
+user_stopped = False
 
 
 async def create_peer_connection():
@@ -122,8 +124,38 @@ async def create_peer_connection():
         # Create a new video track or reuse existing one
         if not video_track:
             video_track = ObjectDetectionStreamTrack(webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, ort_session)
-        peer_connection.addTrack(video_track)
-        logger.info("Added video track to peer connection")
+        # Capture the sender so we can tune RTP encoding parameters (bitrate/framerate)
+        try:
+            sender = peer_connection.addTrack(video_track)
+            logger.info("Added video track to peer connection")
+
+            # Attempt to set sender encoding parameters to be similar to libcamera-hello behavior
+            try:
+                params = sender.getParameters()
+                # Ensure encodings list exists
+                if not getattr(params, 'encodings', None):
+                    params.encodings = [{'maxBitrate': 800000, 'maxFramerate': DEFAULT_FPS}]
+                else:
+                    # Update the first encoding entry with desired constraints
+                    try:
+                        params.encodings[0].update({'maxBitrate': 800000, 'maxFramerate': DEFAULT_FPS})
+                    except Exception:
+                        params.encodings = [{'maxBitrate': 800000, 'maxFramerate': DEFAULT_FPS}]
+
+                # setParameters may be synchronous or return an awaitable depending on aiortc version
+                try:
+                    res = sender.setParameters(params)
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as e:
+                    logger.warning(f"Could not set RTP sender parameters: {e}")
+                else:
+                    logger.info("RTP sender parameters set (bitrate/framerate)")
+            except Exception as e:
+                logger.debug(f"Skipping sender parameter tuning: {e}")
+        except Exception as e:
+            # Ensure we still log adding track failure but continue
+            logger.error(f"Failed to add video track to peer connection: {e}")
     else:
         logger.warning("No webcam available, cannot add video track")
     
@@ -134,8 +166,9 @@ async def create_offer():
     """Create a WebRTC offer with proper ICE gathering"""
     global peer_connection
     
-    # Ensure we have a peer connection
-    if not peer_connection:
+    # Ensure we have a usable peer connection. If the existing one is closed/failed, recreate it.
+    if not peer_connection or getattr(peer_connection, 'connectionState', None) in ('closed', 'failed'):
+        logger.debug('PeerConnection missing or closed/failed, creating a new one')
         await create_peer_connection()
     
     # Create offer
@@ -163,6 +196,10 @@ async def restart_webrtc():
     logger.info("Restarting WebRTC connection")
     
     try:
+        # Clear any buffered ICE candidates before restarting
+        global pending_remote_ice
+        pending_remote_ice = []
+
         # Create a new offer
         offer = await create_offer()
         
@@ -238,9 +275,51 @@ async def webrtc_offer(data):
 
 
 @sio.event
+async def start_webrtc(data):
+    """Handle start request from frontend - create and send an offer"""
+    global user_stopped
+    try:
+        logger.info(f"Received start_webrtc request from server/frontend: {data}")
+        user_stopped = False
+        await restart_webrtc()
+    except Exception as e:
+        logger.error(f"Error handling start_webrtc: {e}")
+
+
+@sio.event
+async def stop_webrtc(data):
+    """Handle stop request from frontend - close peer and stop track"""
+    global user_stopped, peer_connection, video_track
+    try:
+        device = data.get('device_id')
+        logger.info(f"Received stop_webrtc request for device: {device}")
+        user_stopped = True
+        if video_track:
+            try:
+                video_track.stop()
+            except Exception:
+                pass
+            video_track = None
+        if peer_connection:
+            try:
+                await peer_connection.close()
+            except Exception:
+                pass
+            peer_connection = None
+        logger.info('Stopped WebRTC as requested')
+    except Exception as e:
+        logger.error(f"Error handling stop_webrtc: {e}")
+
+
+@sio.event
 async def webrtc_answer(data):
     """Handle WebRTC answer from server"""
     try:
+        # Ensure we have a usable peer connection; recreate if needed
+        if not peer_connection or getattr(peer_connection, 'connectionState', None) in ('closed', 'failed'):
+            logger.debug('PeerConnection missing or closed/failed when receiving answer; creating a new one')
+            await create_peer_connection()
+
         if peer_connection:
             answer = RTCSessionDescription(sdp=data['sdp'], type=data['type'])
             await peer_connection.setRemoteDescription(answer)
@@ -250,14 +329,28 @@ async def webrtc_answer(data):
             if pending_remote_ice:
                 logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
-                    try:
-                        await peer_connection.addIceCandidate(cand)
-                    except Exception as e:
-                        logger.error(f"Failed to add buffered ICE candidate: {e}")
+                        try:
+                            # Normalize buffered candidate into RTCIceCandidate if it's a dict
+                            if isinstance(cand, dict):
+                                rtc_cand = RTCIceCandidate(
+                                    candidate=cand.get('candidate'),
+                                    sdpMid=cand.get('sdpMid'),
+                                    sdpMLineIndex=cand.get('sdpMLineIndex')
+                                )
+                                await peer_connection.addIceCandidate(rtc_cand)
+                            else:
+                                await peer_connection.addIceCandidate(cand)
+                        except Exception as e:
+                            logger.error(f"Failed to add buffered ICE candidate: {e}")
                 pending_remote_ice = []
         else:
             logger.error("Received webrtc_answer but no peer connection exists")
     except Exception as e:
+        # If answer cannot be applied because signaling state is stable (race), log and skip restart
+        msg = str(e)
+        if 'Cannot handle answer in signaling state' in msg or 'in signaling state "stable"' in msg:
+            logger.warning(f"Ignoring answer due to signaling state race: {e}")
+            return
         logger.error(f"Error setting remote description: {e}")
         # Try to recover by restarting WebRTC
         await asyncio.sleep(1)
@@ -273,7 +366,7 @@ async def webrtc_ice_candidate(data):
             logger.debug('webrtc_ice_candidate called with no candidate payload')
             return
 
-        # Normalize payload: aiortc accepts a dict with keys 'candidate', 'sdpMid', 'sdpMLineIndex'
+        # Normalize payload: build a plain dict with expected keys (RTCIceCandidateInit-like)
         if isinstance(candidate_payload, dict) and 'candidate' in candidate_payload:
             candidate_init = {
                 'candidate': candidate_payload.get('candidate'),
@@ -285,18 +378,33 @@ async def webrtc_ice_candidate(data):
         else:
             candidate_init = candidate_payload
 
-        # If peer connection or its remote description is not ready yet, buffer the candidate
+        # Candidate_init should be a dict suitable for aiortc.addIceCandidate
+        candidate_obj = candidate_init
+
+        # Debug log the incoming candidate payload shape
+        logger.debug(f"Incoming ICE candidate payload: {candidate_payload}")
+
+        # If peer connection or its remote description is not ready yet, buffer the candidate dict
         if not peer_connection or getattr(peer_connection, 'remoteDescription', None) is None:
             logger.debug('PeerConnection or remoteDescription not ready, buffering ICE candidate')
-            pending_remote_ice.append(candidate_init)
+            pending_remote_ice.append(candidate_obj)
             return
 
         try:
-            await peer_connection.addIceCandidate(candidate_init)
+            # Convert dict to RTCIceCandidate if needed, because aiortc expects an object with attributes
+            if isinstance(candidate_obj, dict):
+                rtc_cand = RTCIceCandidate(
+                    candidate=candidate_obj.get('candidate'),
+                    sdpMid=candidate_obj.get('sdpMid'),
+                    sdpMLineIndex=candidate_obj.get('sdpMLineIndex')
+                )
+                await peer_connection.addIceCandidate(rtc_cand)
+            else:
+                await peer_connection.addIceCandidate(candidate_obj)
             logger.debug('Added remote ICE candidate')
         except Exception as e:
             logger.error(f'Failed to add ICE candidate immediately: {e}. Buffering candidate.')
-            pending_remote_ice.append(candidate_init)
+            pending_remote_ice.append(candidate_obj)
     except Exception as e:
         logger.error(f"Error adding ICE candidate: {e}")
 
@@ -305,6 +413,11 @@ async def health_check():
     """Periodic health check for WebRTC connection"""
     while running:
         try:
+            # If user explicitly stopped the stream, skip health restarts
+            if user_stopped:
+                await asyncio.sleep(30)
+                continue
+
             if peer_connection and peer_connection.connectionState not in ["connected", "connecting"]:
                 logger.warning(f"WebRTC connection in unhealthy state: {peer_connection.connectionState}")
                 await restart_webrtc()

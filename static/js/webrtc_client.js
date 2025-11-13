@@ -14,10 +14,14 @@ class WebRTCClient {
         this.iceCandidates = [];
         this.isConnected = false;
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
+        this.maxReconnectAttempts = 10;
         this.reconnectDelay = 2000; // ms
         this.connectionTimeout = 15000; // ms
         this.connectionTimer = null;
+    this.connectedConfirmed = false;
+        // connection attempt counter helps avoid stale timers from previous starts
+        this.connectionAttempt = 0;
+        this.currentAttempt = null;
         
         // Thiết lập các event handlers cho socket
         this.setupSocketHandlers();
@@ -34,6 +38,21 @@ class WebRTCClient {
             try {
                 console.log('Nhận WebRTC offer từ drone');
                 this.statusCallback('offer_received');
+                // If we're already confirmed connected, ignore duplicate offers
+                if (this.connectedConfirmed) {
+                    console.debug('Already connectedConfirmed; ignoring incoming offer');
+                    return;
+                }
+                // If signaling state is not stable, reset to avoid "Called in wrong state: stable" errors
+                if (this.peerConnection && this.peerConnection.signalingState && this.peerConnection.signalingState !== 'stable') {
+                    console.warn('Signaling state not stable (', this.peerConnection.signalingState, '); resetting peer connection before applying offer');
+                    try {
+                        this.stop();
+                    } catch (e) {
+                        console.debug('Error while stopping peerConnection during offer handling', e);
+                    }
+                    await this.createPeerConnection();
+                }
                 
                 // Đảm bảo peer connection đã được khởi tạo
                 if (!this.peerConnection || this.peerConnection.connectionState === 'closed') {
@@ -151,18 +170,49 @@ class WebRTCClient {
 
                 this.videoElement.srcObject = event.streams[0];
 
+                // Debug: log track info
+                try {
+                    const tracks = event.streams[0].getVideoTracks();
+                    console.log(`Stream video tracks count: ${tracks.length}`);
+                    tracks.forEach((t, i) => console.log(`Track[${i}]: id=${t.id}, kind=${t.kind}`));
+                } catch (e) {
+                    console.debug('Could not enumerate tracks:', e);
+                }
+
+                // Attach playback event handlers for debugging
+                this.videoElement.onplaying = () => {
+                    console.log('Video element playing');
+                    // Confirm connection only when playback truly starts
+                    this.connectedConfirmed = true;
+                    this.isConnected = true;
+                    this.reconnectAttempts = 0;
+                    // Clear only the timer for this attempt
+                    this.clearConnectionTimeout();
+                };
+                this.videoElement.onpause = () => console.log('Video element paused');
+                this.videoElement.onerror = (ev) => console.error('Video element error', ev);
+
                 // Try to play when metadata is loaded; set muted before play to avoid NotAllowedError
                 this.videoElement.onloadedmetadata = () => {
                     // Some browsers still block autoplay; ensure we try to play but catch errors
-                    this.videoElement.play().catch(e => {
+                    this.videoElement.play().then(() => {
+                        console.log('play() succeeded');
+                    }).catch(e => {
                         console.warn('Không thể tự động phát video:', e);
                     });
                 };
+
+                // Make video element visually obvious during debugging
+                try {
+                    this.videoElement.style.border = '2px solid lime';
+                } catch (e) {}
                 
                 this.statusCallback('track_received');
                 
-                // Xóa timeout khi đã nhận được track
-                this.clearConnectionTimeout();
+                // Note: final confirmation and clearing of timeout happens in onplaying handler
+                // Keep basic state updated here
+                this.isConnected = true;
+                this.reconnectAttempts = 0;
             }
         };
         
@@ -174,6 +224,9 @@ class WebRTCClient {
                 this.isConnected = true;
                 this.reconnectAttempts = 0; // Reset số lần thử kết nối lại
                 this.statusCallback('connected');
+                // Mark confirmed when PC reaches connected as a stronger signal
+                this.connectedConfirmed = true;
+                console.debug('PeerConnection connected; setting connectedConfirmed=true, currentAttempt:', this.currentAttempt);
                 this.clearConnectionTimeout();
             } else if (this.peerConnection.connectionState === 'disconnected') {
                 this.isConnected = false;
@@ -222,6 +275,14 @@ class WebRTCClient {
      */
     async start() {
         try {
+            // Reset confirmation and guard against concurrent starts
+            this.connectedConfirmed = false;
+            if (this.starting) {
+                console.debug('Start already in progress, skipping duplicate start');
+                return;
+            }
+            this.starting = true;
+
             // Đóng kết nối cũ nếu có
             if (this.peerConnection) {
                 await this.stop();
@@ -239,12 +300,16 @@ class WebRTCClient {
             this.startTime = new Date();
             this.statusCallback('start_request_sent');
             
-            // Thiết lập timeout cho kết nối
-            this.setConnectionTimeout();
+            // Thiết lập timeout cho kết nối; increment attempt id to identify this run
+            this.connectionAttempt += 1;
+            this.currentAttempt = this.connectionAttempt;
+            this.setConnectionTimeout(this.currentAttempt);
+            this.starting = false;
         } catch (error) {
             console.error('Lỗi khi khởi tạo kết nối WebRTC:', error);
             this.statusCallback('error', error.message);
             this.handleConnectionFailure();
+            this.starting = false;
         }
     }
     
@@ -266,6 +331,8 @@ class WebRTCClient {
         }
         
         this.isConnected = false;
+        this.connectedConfirmed = false;
+        this.starting = false;
         this.statusCallback('stopped');
         console.log('Đã dừng kết nối WebRTC');
     }
@@ -298,13 +365,39 @@ class WebRTCClient {
      * Thiết lập timeout cho kết nối
      */
     setConnectionTimeout() {
+        // Always clear any previous timer first
         this.clearConnectionTimeout();
-        
-        this.connectionTimer = setTimeout(() => {
-            console.warn('Kết nối WebRTC timeout sau', this.connectionTimeout, 'ms');
+
+        // If already confirmed connected, don't set a timeout
+        if (this.connectedConfirmed || (this.peerConnection && this.peerConnection.connectionState === 'connected')) {
+            console.debug('Connection already active/confirmed; skipping connection timeout');
+            return;
+        }
+
+        // If the video element is already playing, skip creating a timeout (avoid false positives)
+        try {
+            if (this.videoElement && !this.videoElement.paused && this.videoElement.readyState >= 3) {
+                console.debug('Video element already playing; skipping connection timeout');
+                return;
+            }
+        } catch (e) {
+            // ignore cross-origin or other errors when checking element state
+        }
+
+        // Save the timer id and log for debugging races. Capture attempt id to avoid clearing someone else's timer.
+        const attemptId = this.currentAttempt;
+        const timerId = setTimeout(() => {
+            // If this attempt has already been confirmed, skip
+            if (this.currentAttempt !== attemptId || this.connectedConfirmed) {
+                console.debug('Timeout fired for stale attempt or already confirmed; skipping', {attemptId, currentAttempt: this.currentAttempt, connectedConfirmed: this.connectedConfirmed});
+                return;
+            }
+            console.warn('Kết nối WebRTC timeout sau', this.connectionTimeout, 'ms', 'attemptId:', attemptId);
             this.statusCallback('connection_timeout');
             this.handleConnectionFailure();
         }, this.connectionTimeout);
+        this.connectionTimer = timerId;
+        console.debug('Connection timeout set (ms):', this.connectionTimeout, 'timerId:', this.connectionTimer, 'attemptId:', attemptId);
     }
     
     /**
@@ -312,6 +405,7 @@ class WebRTCClient {
      */
     clearConnectionTimeout() {
         if (this.connectionTimer) {
+            console.debug('Clearing connection timeout, timerId:', this.connectionTimer, 'connectedConfirmed:', this.connectedConfirmed, 'currentAttempt:', this.currentAttempt);
             clearTimeout(this.connectionTimer);
             this.connectionTimer = null;
         }
@@ -321,13 +415,25 @@ class WebRTCClient {
      * Xử lý khi kết nối thất bại
      */
     handleConnectionFailure() {
+        // If we're already confirmed connected, do not attempt recovery
+        if (this.connectedConfirmed || (this.peerConnection && this.peerConnection.connectionState === 'connected')) {
+            console.debug('Connection already confirmed; skipping reconnection');
+            return;
+        }
+
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             console.log(`Thử kết nối lại lần ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
             this.statusCallback('reconnecting', { attempt: this.reconnectAttempts, max: this.maxReconnectAttempts });
             
-            // Thử kết nối lại
-            this.start();
+            // Thử kết nối lại sau một khoảng delay để tránh race giữa timers và ontrack
+            setTimeout(() => {
+                try {
+                    this.start();
+                } catch (e) {
+                    console.error('Lỗi khi thử start lại:', e);
+                }
+            }, this.reconnectDelay);
         } else {
             console.error('Đã vượt quá số lần thử kết nối lại tối đa');
             this.statusCallback('reconnect_failed');

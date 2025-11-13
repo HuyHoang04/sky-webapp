@@ -1,4 +1,7 @@
 from flask import Blueprint, jsonify, request, render_template
+import os
+import time
+from werkzeug.utils import secure_filename
 from flask_socketio import emit
 from model.video_model import VideoStream
 import logging
@@ -70,6 +73,17 @@ def handle_start_webrtc(data):
     # Chuyển tiếp yêu cầu đến drone
     emit('start_webrtc', data, broadcast=True, skip_sid=request.sid)
     logger.info(f"[WEBRTC] Forwarded start_webrtc request to drone: {device_id}")
+
+
+@socketio.on('stop_webrtc')
+def handle_stop_webrtc(data):
+    """
+    Forward stop request to drone
+    """
+    device_id = data.get('device_id')
+    logger.info(f"[WEBRTC] Received stop_webrtc request for drone: {device_id}")
+    emit('stop_webrtc', data, broadcast=True, skip_sid=request.sid)
+    logger.info(f"[WEBRTC] Forwarded stop_webrtc request to drone: {device_id}")
     
 @socketio.on('webrtc_ice_candidate')
 def handle_webrtc_ice_candidate(data):
@@ -123,3 +137,29 @@ def register_video_device(data):
     except Exception as e:
         logger.error(f"[VIDEO] Error registering video device: {e}", exc_info=True)
         return {'status': 'error', 'message': str(e)}
+
+
+@video_blueprint.route('/api/capture', methods=['POST'])
+def capture_image():
+    """Endpoint to receive a captured image (multipart/form-data 'image') and save it to disk."""
+    try:
+        if 'image' not in request.files:
+            logger.warning('[CAPTURE] No image field in request')
+            return jsonify({'status': 'error', 'message': 'No image provided'}), 400
+
+        img = request.files['image']
+        device_id = request.form.get('device_id', 'unknown')
+
+        # Ensure filename is safe
+        filename = secure_filename(f"{device_id}_{int(time.time())}.jpg")
+        save_dir = os.path.join(os.getcwd(), 'static', 'captures')
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, filename)
+
+        img.save(save_path)
+        logger.info(f"[CAPTURE] Saved image for {device_id} -> {save_path}")
+
+        return jsonify({'status': 'success', 'path': f'/static/captures/{filename}'}), 200
+    except Exception as e:
+        logger.error(f"[CAPTURE] Error saving image: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500

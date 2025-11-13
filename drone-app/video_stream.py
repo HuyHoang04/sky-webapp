@@ -101,6 +101,24 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
                 2
             )
         else:
+            # Defensive normalization: ensure frame has 3 channels in BGR order
+            try:
+                if isinstance(frame, np.ndarray):
+                    if frame.ndim == 2:
+                        # grayscale -> BGR
+                        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+                    elif frame.ndim == 3 and frame.shape[2] == 4:
+                        # 4-channel image (e.g., RGBA/BGRA) -> try to convert to BGR
+                        try:
+                            frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+                        except Exception:
+                            try:
+                                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                            except Exception:
+                                # Fallback: drop alpha
+                                frame = frame[:, :, :3]
+            except Exception as e:
+                logger.debug(f"Frame normalization error: {e}")
             # Only perform object detection if ort_session exists and not every frame
             # to reduce CPU usage (e.g., every 3rd frame)
             if self.ort_session is not None and self.counter % 3 == 0:
@@ -108,7 +126,17 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
 
 
         # Convert to VideoFrame with proper timing
-        video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+        # Ensure the ndarray has shape (H, W, 3) and dtype uint8 before converting
+        try:
+            if not (isinstance(frame, np.ndarray) and frame.ndim == 3 and frame.shape[2] == 3):
+                # As a last resort, convert or create a blank frame
+                frame = cv2.resize(np.zeros((self.height, self.width, 3), np.uint8), (self.width, self.height))
+            video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+        except Exception as e:
+            logger.error(f"Failed to convert ndarray to VideoFrame: {e}")
+            # Fallback to a blank frame
+            fallback = np.zeros((self.height, self.width, 3), np.uint8)
+            video_frame = VideoFrame.from_ndarray(fallback, format="bgr24")
         video_frame.pts = self.counter
         video_frame.time_base = Fraction(1, self.fps)
         self.last_frame_time = time.time()

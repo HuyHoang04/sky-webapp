@@ -103,7 +103,7 @@
                                     <i class="fas fa-stop"></i>
                                     <span>Stop</span>
                                 </button>
-                                <button class="btn btn-outline-light btn-sm">
+                                <button id="captureImage" class="btn btn-outline-light btn-sm">
                                     <i class="fas fa-camera"></i>
                                     <span>Capture</span>
                                 </button>
@@ -124,7 +124,7 @@
                                     <i class="fas fa-clock me-2"></i>
                                     <span id="flightTime">00:15:32</span>
                                 </div>
-                                <button class="btn btn-outline-light btn-sm">
+                                <button id="fullscreenBtn" class="btn btn-outline-light btn-sm">
                                     <i class="fas fa-expand"></i>
                                 </button>
                             </div>
@@ -467,6 +467,16 @@
     // Load dữ liệu ban đầu
     loadVideoStreams();
     loadGPSData();
+    // Update flight time display every second
+    function updateFlightTime() {
+        const el = document.getElementById('flightTime');
+        if (!el) return;
+        const now = new Date();
+        // Use locale time string for human-readable format
+        el.textContent = now.toLocaleTimeString();
+    }
+    updateFlightTime();
+    setInterval(updateFlightTime, 1000);
     
     // Xử lý khi nhận dữ liệu GPS mới
     socket.on('gps_update', function(data) {
@@ -523,6 +533,8 @@
     const startStreamButton = document.getElementById('startStream');
     const stopStreamButton = document.getElementById('stopStream');
     const streamStatus = document.getElementById('streamStatus');
+    const captureButton = document.getElementById('captureImage');
+    const fullscreenButton = document.getElementById('fullscreenBtn');
     
     let peerConnection;
     let currentVideoElement = null;
@@ -576,7 +588,7 @@
             
             // Gửi yêu cầu bắt đầu stream đến server
             console.log('Requesting stream start for device:', deviceId);
-            socket.emit('start_webrtc_stream', {
+            socket.emit('start_webrtc', {
                 device_id: deviceId
             });
             
@@ -584,6 +596,99 @@
             console.error('Lỗi khi khởi tạo WebRTC:', error);
             streamStatus.textContent = 'Lỗi kết nối';
             streamStatus.className = 'badge bg-danger';
+        }
+    }
+
+    // Capture current frame from active video element and POST to server
+    async function captureCurrentFrame() {
+        try {
+            // Determine active video element
+            let videoEl = currentVideoElement;
+            if (!videoEl && window.videoLayoutManager) videoEl = window.videoLayoutManager.getActiveVideoElement();
+            if (!videoEl || !videoEl.srcObject) {
+                // Try to find any video element in the grid
+                const anyVideo = document.querySelector('#videoGrid video');
+                if (!anyVideo || !anyVideo.srcObject) {
+                    alert('Không có luồng video để chụp');
+                    return;
+                }
+                videoEl = anyVideo;
+            }
+
+            // Draw frame to canvas
+            const track = videoEl.srcObject.getVideoTracks && videoEl.srcObject.getVideoTracks()[0];
+            // Wait briefly until video has current frame data
+            const waitForFrame = () => new Promise((resolve) => {
+                if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0) return resolve(true);
+                const onCanPlay = () => {
+                    videoEl.removeEventListener('playing', onCanPlay);
+                    resolve(true);
+                };
+                // Timeout fallback
+                const t = setTimeout(() => { videoEl.removeEventListener('playing', onCanPlay); resolve(false); }, 500);
+                videoEl.addEventListener('playing', onCanPlay);
+            });
+            const ok = await waitForFrame();
+            const width = videoEl.videoWidth || 640;
+            const height = videoEl.videoHeight || 480;
+            if (!ok && (!width || !height)) {
+                alert('Khung hình video chưa sẵn sàng để chụp');
+                return;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(videoEl, 0, 0, width, height);
+
+            // Convert to blob and send to server
+            canvas.toBlob(async (blob) => {
+                if (!blob) {
+                    alert('Không thể lấy khung hình');
+                    return;
+                }
+
+                const form = new FormData();
+                form.append('image', blob, 'capture.jpg');
+                // Include device id if available
+                const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'Drone1';
+                form.append('device_id', deviceId);
+
+                streamStatus.textContent = 'Đang gửi ảnh...';
+                streamStatus.className = 'badge bg-info';
+
+                try {
+                    const resp = await fetch('/api/capture', { method: 'POST', body: form });
+                    if (resp.ok) {
+                        streamStatus.textContent = 'Ảnh đã lưu';
+                        streamStatus.className = 'badge bg-success';
+                    } else {
+                        const text = await resp.text();
+                        console.error('Capture failed:', resp.status, text);
+                        streamStatus.textContent = 'Lỗi lưu ảnh';
+                        streamStatus.className = 'badge bg-danger';
+                    }
+                } catch (err) {
+                    console.error('Error sending capture:', err);
+                    streamStatus.textContent = 'Lỗi gửi ảnh';
+                    streamStatus.className = 'badge bg-danger';
+                }
+            }, 'image/jpeg', 0.9);
+
+        } catch (err) {
+            console.error('Capture error:', err);
+            alert('Lỗi khi chụp ảnh: ' + err.message);
+        }
+    }
+
+    // Toggle fullscreen on the video container
+    function toggleFullscreen() {
+        const container = document.getElementById('videoContainer');
+        if (!container) return;
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(e => console.warn('exitFullscreen failed', e));
+        } else {
+            container.requestFullscreen?.().catch(e => console.warn('requestFullscreen failed', e));
         }
     }
     
@@ -647,25 +752,44 @@
     
     // Sự kiện khi nhấn nút bắt đầu stream
     startStreamButton.addEventListener('click', function() {
-        const selectedDevice = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
+        const selectedDevice = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || (document.querySelector('#videoSourceList a[data-device-id]')?.getAttribute('data-device-id')) || 'Drone1';
         console.log('Starting WebRTC for device:', selectedDevice);
         startWebRTC(selectedDevice);
+        startStreamButton.disabled = true;
+        stopStreamButton.disabled = false;
     });
     
     // Sự kiện khi nhấn nút dừng stream
     stopStreamButton.addEventListener('click', function() {
+        const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || (document.querySelector('#videoSourceList a[data-device-id]')?.getAttribute('data-device-id')) || 'Drone1';
+        // Tell server/drone to stop streaming
+        console.log('Requesting stream stop for device:', deviceId);
+        socket.emit('stop_webrtc', { device_id: deviceId });
+
         if (peerConnection) {
-            peerConnection.close();
+            try { peerConnection.close(); } catch (e) { console.warn('close pc', e); }
             peerConnection = null;
         }
-        
+
         if (currentVideoElement) {
             currentVideoElement.srcObject = null;
             currentVideoElement = null;
         }
-        
+
         streamStatus.textContent = 'Đã dừng';
         streamStatus.className = 'badge bg-secondary';
+        startStreamButton.disabled = false;
+        stopStreamButton.disabled = true;
+    });
+
+    // Capture button handler
+    captureButton.addEventListener('click', function() {
+        captureCurrentFrame();
+    });
+
+    // Fullscreen button handler
+    fullscreenButton.addEventListener('click', function() {
+        toggleFullscreen();
     });
     
     // Xử lý khi chọn nguồn video

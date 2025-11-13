@@ -37,11 +37,30 @@ class CameraManager:
 
             self._use_picamera2 = True
             self._picam2 = Picamera2()
-            # configure preview size/format but don't assume advanced configs
+            # Try to configure Picamera2 in a way similar to libcamera-hello: set preview size/format/framerate
             try:
-                self._picam2.preview_configuration.main.size = (self.width, self.height)
-                self._picam2.preview_configuration.main.format = "BGR888"
-                self._picam2.configure("preview")
+                # Prefer the high-level factory if available
+                if hasattr(Picamera2, 'create_preview_configuration'):
+                    cfg = Picamera2.create_preview_configuration({'size': (self.width, self.height), 'format': 'RGB888'})
+                    self._picam2.configure(cfg)
+                else:
+                    # Older API: attempt to set preview_configuration attributes
+                    try:
+                        self._picam2.preview_configuration.main.size = (self.width, self.height)
+                        self._picam2.preview_configuration.main.format = 'RGB888'
+                        self._picam2.configure('preview')
+                    except Exception:
+                        # Fall back to default configuration
+                        try:
+                            self._picam2.configure(self._picam2.create_preview_configuration({'size': (self.width, self.height)}))
+                        except Exception:
+                            pass
+                # Attempt to set framerate if the API exposes it
+                try:
+                    self._picam2.set_controls({'FrameRate': int(self.fps)})
+                except Exception:
+                    # Not critical if unsupported
+                    pass
             except Exception:
                 # Some versions expose a different API; ignore if not available
                 pass
@@ -83,6 +102,38 @@ class CameraManager:
             try:
                 if self._use_picamera2 and self._picam2 is not None:
                     frame = self._picam2.capture_array()
+                    # Picamera2 commonly returns RGB arrays; convert to BGR for OpenCV/aiortc consistency
+                    try:
+                        if frame is not None and frame.ndim == 3:
+                            # 3-channel: likely RGB -> convert to BGR
+                            if frame.shape[2] == 3:
+                                try:
+                                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                                except Exception:
+                                    # If conversion fails, leave as-is
+                                    pass
+                            # 4-channel: could be RGBA/BGRA/XRGB — try to convert to BGR
+                            elif frame.shape[2] == 4:
+                                try:
+                                    # Try RGBA -> BGR first (common when format is RGBX/RGBA)
+                                    frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+                                except Exception:
+                                    try:
+                                        # Try BGRA -> BGR
+                                        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                                    except Exception:
+                                        # Fall back to dropping the alpha channel
+                                        frame = frame[:, :, :3]
+                        elif frame is not None and frame.ndim == 2:
+                            # Single-channel (Bayer/raw) — attempt demosaic to BGR
+                            try:
+                                frame = cv2.cvtColor(frame, cv2.COLOR_BAYER_BG2BGR)
+                            except Exception:
+                                # If demosaic fails, leave as-is and let downstream handle it
+                                pass
+                    except Exception:
+                        # If any conversion fails, continue with original frame
+                        pass
                 elif not self._use_picamera2 and self._cap is not None:
                     ret, frame = self._cap.read()
                     if not ret:
