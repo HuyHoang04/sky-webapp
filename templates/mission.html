@@ -5,48 +5,40 @@
 {% block head %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
-<link rel="stylesheet" href="{{ url_for('static', filename='css/mission-tools.css') }}" />
 <style>
     #mission-map {
         height: 600px;
-        border-radius: var(--border-radius);
+        border-radius: 8px;
     }
     .mission-sidebar {
-        height: calc(600px - 60px);
-        overflow-y: auto;
-    }
-    .waypoint-list {
-        max-height: 300px;
+        height: 600px;
         overflow-y: auto;
     }
     .mission-card {
         border-left: 4px solid transparent;
         transition: all 0.3s ease;
+        cursor: pointer;
     }
     .mission-card:hover {
-        border-left-color: var(--secondary-color);
+        border-left-color: #1890ff;
+        background: rgba(24, 144, 255, 0.1);
     }
     .mission-active {
-        border-left-color: var(--success-color);
+        border-left-color: #52c41a;
         background: rgba(82, 196, 26, 0.1);
     }
-    .mission-completed {
-        border-left-color: var(--gray-300);
-        opacity: 0.7;
-    }
     .mission-planned {
-        border-left-color: var(--warning-color);
+        border-left-color: #faad14;
+    }
+    .mission-completed {
+        border-left-color: #8c8c8c;
+        opacity: 0.7;
     }
     .waypoint-item {
         background: rgba(0, 0, 0, 0.2);
-        border-radius: var(--border-radius);
+        border-radius: 8px;
         padding: 0.75rem;
         margin-bottom: 0.5rem;
-        cursor: move;
-        transition: all 0.3s ease;
-    }
-    .waypoint-item:hover {
-        background: rgba(0, 0, 0, 0.3);
     }
     .mission-stats {
         position: absolute;
@@ -56,19 +48,68 @@
         padding: 1rem;
         background: rgba(0, 0, 0, 0.8);
         backdrop-filter: blur(10px);
-        border-top: 1px solid var(--gray-100);
+    }
+    /* Mission Detail Modal Styles */
+    #missionDetailContent .table td {
+        padding: 0.5rem;
+        vertical-align: middle;
+        color: #e0e0e0;
+    }
+    #missionDetailContent .table tr:hover {
+        background: rgba(24, 144, 255, 0.1);
+    }
+    #missionDetailContent h6 {
+        color: #1890ff;
+        font-weight: 600;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid rgba(24, 144, 255, 0.2);
+    }
+    #missionDetailContent .text-muted {
+        color: #999 !important;
+    }
+    .modal-xl {
+        max-width: 1200px;
+    }
+    /* Order Management Styles */
+    #ordersListContainer .list-group-item {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #e0e0e0;
+        margin-bottom: 0.5rem;
+    }
+    #ordersListContainer .list-group-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+    #addOrderForm {
+        background: rgba(255, 255, 255, 0.03) !important;
+    }
+    #addOrderForm label {
+        color: #e0e0e0;
+    }
+    #addOrderForm .form-control,
+    #addOrderForm .form-select {
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #e0e0e0;
+    }
+    #addOrderForm .form-control:focus,
+    #addOrderForm .form-select:focus {
+        background: rgba(0, 0, 0, 0.4);
+        border-color: #1890ff;
+        color: #fff;
     }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="container-fluid py-4 mt-5">
+    <!-- Header -->
     <div class="row mb-4">
         <div class="col-12">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <h2 class="mb-1">Mission Management</h2>
-                    <p class="text-muted mb-0">Flight Planning and Mission Control</p>
+                    <p class="text-muted mb-0">Flight Planning & Mission Control</p>
                 </div>
                 <div class="d-flex gap-3">
                     <button class="btn btn-outline-light" onclick="clearMission()">
@@ -83,72 +124,31 @@
     </div>
 
     <div class="row">
-        <!-- Mission Map -->
+        <!-- Map -->
         <div class="col-lg-8 mb-4">
             <div class="card h-100">
                 <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-map"></i> Mission Planning</h5>
-                        <div class="d-flex align-items-center gap-4 mission-tools">
-                            <div class="d-flex gap-2">
-                                <button class="btn btn-outline-light btn-sm" onclick="setDrawingMode('polygon')">
-                                    <i class="fas fa-draw-polygon me-2"></i>Area
-                                </button>
-                                <button class="btn btn-outline-light btn-sm" onclick="setDrawingMode('marker')">
-                                    <i class="fas fa-map-marker-alt me-2"></i>Point
-                                </button>
-                                <button class="btn btn-outline-light btn-sm" onclick="setDrawingMode('polyline')">
-                                    <i class="fas fa-route me-2"></i>Path
-                                </button>
-                            </div>
-                            <select class="form-select form-select-sm" style="width: 140px;" id="missionType">
-                                <option value="survey">Area Survey</option>
-                                <option value="inspection">Point Inspection</option>
-                                <option value="delivery">Delivery Route</option>
-                                <option value="patrol">Patrol Path</option>
-                            </select>
-                        </div>
-                    </div>
+                    <h5><i class="fas fa-map"></i> Mission Planning Map</h5>
                 </div>
                 <div class="card-body p-0 position-relative">
                     <div id="mission-map"></div>
                     <div class="mission-stats">
                         <div class="row g-3">
                             <div class="col-md-3">
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-ruler me-2 text-primary"></i>
-                                    <div>
-                                        <small class="text-muted d-block">Total Distance</small>
-                                        <strong id="totalDistance">0.00 km</strong>
-                                    </div>
-                                </div>
+                                <small class="text-muted d-block">Distance</small>
+                                <strong id="totalDistance">0.00 km</strong>
                             </div>
                             <div class="col-md-3">
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-clock me-2 text-warning"></i>
-                                    <div>
-                                        <small class="text-muted d-block">Est. Duration</small>
-                                        <strong id="estDuration">00:00:00</strong>
-                                    </div>
-                                </div>
+                                <small class="text-muted d-block">Duration</small>
+                                <strong id="estDuration">00:00:00</strong>
                             </div>
                             <div class="col-md-3">
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-battery-three-quarters me-2 text-success"></i>
-                                    <div>
-                                        <small class="text-muted d-block">Battery Required</small>
-                                        <strong id="batteryRequired">0%</strong>
-                                    </div>
-                                </div>
+                                <small class="text-muted d-block">Battery</small>
+                                <strong id="batteryRequired">0%</strong>
                             </div>
                             <div class="col-md-3">
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-camera me-2 text-info"></i>
-                                    <div>
-                                        <small class="text-muted d-block">Photos Est.</small>
-                                        <strong id="photosEst">0</strong>
-                                    </div>
-                                </div>
+                                <small class="text-muted d-block">Waypoints</small>
+                                <strong id="waypointCount">0</strong>
                             </div>
                         </div>
                     </div>
@@ -156,78 +156,34 @@
             </div>
         </div>
 
-        <!-- Mission Control -->
+        <!-- Sidebar -->
         <div class="col-lg-4 mb-4">
             <div class="card h-100">
                 <div class="card-header">
                     <h5><i class="fas fa-tasks"></i> Mission Control</h5>
                 </div>
                 <div class="card-body mission-sidebar">
+                    <!-- Active Mission -->
                     <div class="mb-4">
                         <h6 class="mb-3">Active Mission</h6>
-                        <div class="mission-card mission-active p-3 mb-3">
-                            <div class="d-flex justify-content-between align-items-start mb-2">
-                                <div>
-                                    <h6 class="mb-1">Area Survey #127</h6>
-                                    <small class="text-muted">Started 10 minutes ago</small>
-                                </div>
-                                <span class="badge bg-success">In Progress</span>
-                            </div>
-                            <div class="progress" style="height: 4px;">
-                                <div class="progress-bar bg-success" style="width: 45%"></div>
-                            </div>
-                            <div class="mt-3">
-                                <button class="btn btn-sm btn-danger me-2">
-                                    <i class="fas fa-stop-circle me-1"></i>Stop
-                                </button>
-                                <button class="btn btn-sm btn-warning">
-                                    <i class="fas fa-pause-circle me-1"></i>Pause
-                                </button>
-                            </div>
+                        <div class="mission-card mission-active p-3 mb-3" id="activeMissionCard">
+                            <p class="text-muted text-center py-3 mb-0">No active mission</p>
                         </div>
                     </div>
 
+                    <!-- Waypoints -->
                     <div class="mb-4">
                         <h6 class="mb-3">Waypoints</h6>
-                        <div class="waypoint-list" id="waypointList">
-                            <div class="waypoint-item">
-                                <div class="d-flex justify-content-between">
-                                    <div class="d-flex align-items-center">
-                                        <i class="fas fa-map-marker-alt text-primary me-2"></i>
-                                        <div>
-                                            <div class="mb-1">Waypoint 1</div>
-                                            <small class="text-muted">21.0285°N, 105.8542°E</small>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <button class="btn btn-sm btn-link text-danger">
-                                            <i class="fas fa-times"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
+                        <div id="waypointList">
+                            <p class="text-muted text-center py-3 mb-0">Click on map to add waypoints</p>
                         </div>
                     </div>
 
+                    <!-- Missions List -->
                     <div>
-                        <h6 class="mb-3">Scheduled Missions</h6>
-                        <div class="mission-card mission-planned p-3 mb-3">
-                            <div class="d-flex justify-content-between align-items-start">
-                                <div>
-                                    <h6 class="mb-1">Point Inspection #128</h6>
-                                    <small class="text-muted">Scheduled for 14:30</small>
-                                </div>
-                                <span class="badge bg-warning">Planned</span>
-                            </div>
-                        </div>
-                        <div class="mission-card mission-completed p-3">
-                            <div class="d-flex justify-content-between align-items-start">
-                                <div>
-                                    <h6 class="mb-1">Delivery Route #126</h6>
-                                    <small class="text-muted">Completed at 09:15</small>
-                                </div>
-                                <span class="badge bg-secondary">Completed</span>
-                            </div>
+                        <h6 class="mb-3">Missions</h6>
+                        <div id="missionsList">
+                            <p class="text-muted text-center py-3 mb-0">No missions yet</p>
                         </div>
                     </div>
                 </div>
@@ -235,110 +191,61 @@
         </div>
     </div>
 
-    <!-- Mission Configuration -->
+    <!-- Configuration -->
     <div class="row">
-        <div class="col-lg-8 mb-4">
+        <div class="col-lg-6 mb-4">
             <div class="card">
                 <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-cog"></i> Mission Configuration</h5>
-                        <button class="btn btn-primary btn-sm" onclick="saveMissionConfig()">
-                            <i class="fas fa-save me-1"></i>Save Configuration
-                        </button>
-                    </div>
+                    <h5><i class="fas fa-cog"></i> Flight Parameters</h5>
                 </div>
                 <div class="card-body">
-                    <div class="row g-4">
+                    <div class="row g-3">
                         <div class="col-md-6">
-                            <h6 class="mb-3">Flight Parameters</h6>
-                            <div class="mb-3">
-                                <label class="form-label">Flight Height</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="flightHeight" value="50">
-                                    <span class="input-group-text">meters</span>
-                                </div>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Flight Speed</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="flightSpeed" value="5">
-                                    <span class="input-group-text">m/s</span>
-                                </div>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Return Home Altitude</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="returnAltitude" value="70">
-                                    <span class="input-group-text">meters</span>
-                                </div>
-                            </div>
+                            <label class="form-label">Altitude (m)</label>
+                            <input type="number" class="form-control" id="flightHeight" value="50">
                         </div>
                         <div class="col-md-6">
-                            <h6 class="mb-3">Camera Settings</h6>
-                            <div class="mb-3">
-                                <label class="form-label">Photo Interval</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="photoInterval" value="2">
-                                    <span class="input-group-text">seconds</span>
-                                </div>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Overlap</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="overlap" value="75">
-                                    <span class="input-group-text">%</span>
-                                </div>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Camera Angle</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="cameraAngle" value="90">
-                                    <span class="input-group-text">degrees</span>
-                                </div>
-                            </div>
+                            <label class="form-label">Speed (m/s)</label>
+                            <input type="number" class="form-control" id="flightSpeed" value="5">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Return Altitude (m)</label>
+                            <input type="number" class="form-control" id="returnAltitude" value="70">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Photo Interval (s)</label>
+                            <input type="number" class="form-control" id="photoInterval" value="2">
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="col-lg-4 mb-4">
+        <div class="col-lg-6 mb-4">
             <div class="card">
                 <div class="card-header">
                     <h5><i class="fas fa-shield-alt"></i> Safety Settings</h5>
                 </div>
                 <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label">Minimum Battery for RTH</label>
-                        <div class="input-group">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Min Battery RTH (%)</label>
                             <input type="number" class="form-control" id="minBattery" value="30">
-                            <span class="input-group-text">%</span>
                         </div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Maximum Distance</label>
-                        <div class="input-group">
+                        <div class="col-md-6">
+                            <label class="form-label">Max Distance (m)</label>
                             <input type="number" class="form-control" id="maxDistance" value="2000">
-                            <span class="input-group-text">meters</span>
                         </div>
-                    </div>
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="obstacleAvoidance" checked>
-                        <label class="form-check-label" for="obstacleAvoidance">
-                            Obstacle Avoidance
-                        </label>
-                    </div>
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="geofencing" checked>
-                        <label class="form-check-label" for="geofencing">
-                            Geofencing
-                        </label>
-                    </div>
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="emergencyRTH" checked>
-                        <label class="form-check-label" for="emergencyRTH">
-                            Emergency Return-to-Home
-                        </label>
+                        <div class="col-12">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="obstacleAvoidance" checked>
+                                <label class="form-check-label">Obstacle Avoidance</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="geofencing" checked>
+                                <label class="form-check-label">Geofencing</label>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -348,38 +255,552 @@
 
 <!-- New Mission Modal -->
 <div class="modal fade" id="newMissionModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Create New Mission</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label">Mission Name</label>
-                    <input type="text" class="form-control" id="missionName">
+                <!-- Basic Info -->
+                <h6 class="mb-3"><i class="fas fa-info-circle"></i> Basic Information</h6>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <label class="form-label">Mission Name *</label>
+                        <input type="text" class="form-control" id="missionName" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Mission Type *</label>
+                        <select class="form-select" id="newMissionType">
+                            <option value="survey">Area Survey</option>
+                            <option value="inspection">Inspection</option>
+                            <option value="delivery">Delivery</option>
+                            <option value="patrol">Patrol</option>
+                            <option value="mapping">Mapping</option>
+                            <option value="emergency">Emergency</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Device ID *</label>
+                        <input type="text" class="form-control" id="modalDeviceId" placeholder="e.g., DRONE001" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Device Name</label>
+                        <input type="text" class="form-control" id="modalDeviceName" placeholder="e.g., DJI Mavic Pro">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Description</label>
+                        <textarea class="form-control" id="missionDescription" rows="2"></textarea>
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Mission Type</label>
-                    <select class="form-select" id="newMissionType">
-                        <option value="survey">Area Survey</option>
-                        <option value="inspection">Point Inspection</option>
-                        <option value="delivery">Delivery Route</option>
-                        <option value="patrol">Patrol Path</option>
-                    </select>
+
+                <!-- Flight Parameters -->
+                <h6 class="mb-3"><i class="fas fa-plane"></i> Flight Parameters</h6>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <label class="form-label">Flight Altitude (m)</label>
+                        <input type="number" class="form-control" id="modalFlightHeight" value="50" min="10" max="500">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Flight Speed (m/s)</label>
+                        <input type="number" class="form-control" id="modalFlightSpeed" value="5" min="1" max="15">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Return Altitude (m)</label>
+                        <input type="number" class="form-control" id="modalReturnAltitude" value="70" min="10" max="500">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Photo Interval (s)</label>
+                        <input type="number" class="form-control" id="modalPhotoInterval" value="2" min="0.5" step="0.5">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Photo Overlap (%)</label>
+                        <input type="number" class="form-control" id="modalOverlap" value="75" min="0" max="100">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Camera Angle (°)</label>
+                        <input type="number" class="form-control" id="modalCameraAngle" value="90" min="0" max="180">
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Schedule Start</label>
-                    <input type="datetime-local" class="form-control" id="missionStart">
+
+                <!-- Safety Settings -->
+                <h6 class="mb-3"><i class="fas fa-shield-alt"></i> Safety Settings</h6>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Min Battery RTH (%)</label>
+                        <input type="number" class="form-control" id="modalMinBattery" value="30" min="10" max="50">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Max Distance (m)</label>
+                        <input type="number" class="form-control" id="modalMaxDistance" value="2000" min="100" max="10000">
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check form-switch d-inline-block me-4">
+                            <input class="form-check-input" type="checkbox" id="modalObstacleAvoidance" checked>
+                            <label class="form-check-label">Obstacle Avoidance</label>
+                        </div>
+                        <div class="form-check form-switch d-inline-block me-4">
+                            <input class="form-check-input" type="checkbox" id="modalGeofencing" checked>
+                            <label class="form-check-label">Geofencing</label>
+                        </div>
+                        <div class="form-check form-switch d-inline-block">
+                            <input class="form-check-input" type="checkbox" id="modalEmergencyRth" checked>
+                            <label class="form-check-label">Emergency RTH</label>
+                        </div>
+                    </div>
                 </div>
+
+                <!-- Orders Section (Optional) -->
+                <h6 class="mb-3"><i class="fas fa-box"></i> Delivery Orders (Optional)</h6>
                 <div class="mb-3">
-                    <label class="form-label">Description</label>
-                    <textarea class="form-control" id="missionDescription" rows="3"></textarea>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="modalAddOrders">
+                        <label class="form-check-label">Add delivery orders to this mission</label>
+                    </div>
+                </div>
+
+                <div id="modalOrdersSection" style="display: none;">
+                    <div class="border rounded p-3 mb-3" style="background: rgba(0,0,0,0.1);">
+                        <div id="modalOrdersList">
+                            <p class="text-muted small mb-2">No orders added yet</p>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="addQuickOrder()">
+                            <i class="fas fa-plus me-1"></i>Add Quick Order
+                        </button>
+                    </div>
+                </div>
+
+                <div class="alert alert-info mb-0">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <small>Add waypoints on the map before creating mission. You can add delivery orders now or manage them later.</small>
                 </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="createNewMission()">Create Mission</button>
+                <button type="button" class="btn btn-primary" onclick="createNewMission()">
+                    <i class="fas fa-save me-2"></i>Create Mission
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Mission Detail Modal -->
+<div class="modal fade" id="missionDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-info-circle"></i> Mission Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="missionDetailContent">
+                <!-- Content will be loaded dynamically -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-info" id="btnManageOrders">
+                    <i class="fas fa-box me-2"></i>Manage Orders
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="btnEditFromDetail">
+                    <i class="fas fa-edit me-2"></i>Edit Mission
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Mission Modal -->
+<div class="modal fade" id="editMissionModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Edit Mission</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editMissionId">
+                
+                <!-- Basic Info -->
+                <h6 class="mb-3"><i class="fas fa-info-circle"></i> Basic Information</h6>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <label class="form-label">Mission Name *</label>
+                        <input type="text" class="form-control" id="editMissionName" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Mission Type *</label>
+                        <select class="form-select" id="editMissionType">
+                            <option value="survey">Area Survey</option>
+                            <option value="inspection">Inspection</option>
+                            <option value="delivery">Delivery</option>
+                            <option value="patrol">Patrol</option>
+                            <option value="mapping">Mapping</option>
+                            <option value="emergency">Emergency</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Device ID *</label>
+                        <input type="text" class="form-control" id="editDeviceId" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Device Name</label>
+                        <input type="text" class="form-control" id="editDeviceName">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Status</label>
+                        <select class="form-select" id="editMissionStatus">
+                            <option value="draft">Draft</option>
+                            <option value="planned">Planned</option>
+                            <option value="ready">Ready</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="paused">Paused</option>
+                            <option value="completed">Completed</option>
+                            <option value="cancelled">Cancelled</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Description</label>
+                        <textarea class="form-control" id="editMissionDescription" rows="2"></textarea>
+                    </div>
+                </div>
+
+                <!-- Flight Parameters -->
+                <h6 class="mb-3"><i class="fas fa-plane"></i> Flight Parameters</h6>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <label class="form-label">Flight Altitude (m)</label>
+                        <input type="number" class="form-control" id="editFlightHeight" min="10" max="500">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Flight Speed (m/s)</label>
+                        <input type="number" class="form-control" id="editFlightSpeed" min="1" max="15">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Return Altitude (m)</label>
+                        <input type="number" class="form-control" id="editReturnAltitude" min="10" max="500">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Photo Interval (s)</label>
+                        <input type="number" class="form-control" id="editPhotoInterval" min="0.5" step="0.5">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Photo Overlap (%)</label>
+                        <input type="number" class="form-control" id="editOverlap" min="0" max="100">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Camera Angle (°)</label>
+                        <input type="number" class="form-control" id="editCameraAngle" min="0" max="180">
+                    </div>
+                </div>
+
+                <!-- Safety Settings -->
+                <h6 class="mb-3"><i class="fas fa-shield-alt"></i> Safety Settings</h6>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Min Battery RTH (%)</label>
+                        <input type="number" class="form-control" id="editMinBattery" min="10" max="50">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Max Distance (m)</label>
+                        <input type="number" class="form-control" id="editMaxDistance" min="100" max="10000">
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check form-switch d-inline-block me-4">
+                            <input class="form-check-input" type="checkbox" id="editObstacleAvoidance">
+                            <label class="form-check-label">Obstacle Avoidance</label>
+                        </div>
+                        <div class="form-check form-switch d-inline-block me-4">
+                            <input class="form-check-input" type="checkbox" id="editGeofencing">
+                            <label class="form-check-label">Geofencing</label>
+                        </div>
+                        <div class="form-check form-switch d-inline-block">
+                            <input class="form-check-input" type="checkbox" id="editEmergencyRth">
+                            <label class="form-check-label">Emergency RTH</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveEditedMission()">
+                    <i class="fas fa-save me-2"></i>Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Order Modal (For Mission Creation) -->
+<div class="modal fade" id="quickOrderModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Quick Order</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-6">
+                        <label class="form-label">Category *</label>
+                        <select class="form-select" id="quickOrderCategory">
+                            <option value="food">🍽️ Food</option>
+                            <option value="medical">🏥 Medical</option>
+                            <option value="equipment">🔧 Equipment</option>
+                            <option value="documents">📄 Documents</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">Priority</label>
+                        <select class="form-select" id="quickOrderPriority">
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Pickup Location -->
+                    <div class="col-12">
+                        <label class="form-label">Pickup Location *</label>
+                        <select class="form-select" id="quickPickupLocation">
+                            <option value="">-- Select pickup point --</option>
+                            <option value="warehouse_hanoi" data-lat="21.0285" data-lng="105.8542">📦 Warehouse Hanoi</option>
+                            <option value="store_hoangmai" data-lat="20.9800" data-lng="105.8400">🏪 Store Hoang Mai</option>
+                            <option value="store_caugiay" data-lat="21.0333" data-lng="105.7950">🏪 Store Cau Giay</option>
+                            <option value="pharmacy_central" data-lat="21.0245" data-lng="105.8412">💊 Central Pharmacy</option>
+                            <option value="custom">📍 Custom Location...</option>
+                        </select>
+                    </div>
+                    
+                    <div id="quickPickupCustom" style="display: none;">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <input type="number" step="0.000001" class="form-control form-control-sm" id="quickPickupLat" placeholder="Latitude">
+                            </div>
+                            <div class="col-6">
+                                <input type="number" step="0.000001" class="form-control form-control-sm" id="quickPickupLng" placeholder="Longitude">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Delivery Location -->
+                    <div class="col-12">
+                        <label class="form-label">Delivery Location (Waypoint) *</label>
+                        <select class="form-select" id="quickDeliveryWaypoint">
+                            <option value="">-- Select delivery waypoint --</option>
+                        </select>
+                        <small class="text-muted">Waypoints will be loaded from map</small>
+                    </div>
+                    
+                    <div class="col-12">
+                        <label class="form-label">Delivery Contact</label>
+                        <input type="text" class="form-control" id="quickDeliveryContact" placeholder="Name or phone">
+                    </div>
+                    
+                    <div class="col-6">
+                        <label class="form-label">Weight (kg)</label>
+                        <input type="number" step="0.1" class="form-control" id="quickOrderWeight" placeholder="0.0">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">Item Count</label>
+                        <input type="number" class="form-control" id="quickOrderItems" value="1">
+                    </div>
+                    
+                    <div class="col-12">
+                        <label class="form-label">Special Instructions</label>
+                        <input type="text" class="form-control" id="quickOrderNotes" placeholder="e.g., Fragile, Keep cold">
+                    </div>
+                    
+                    <div class="col-12">
+                        <div class="form-check form-switch d-inline-block me-3">
+                            <input class="form-check-input" type="checkbox" id="quickOrderFragile">
+                            <label class="form-check-label small">Fragile</label>
+                        </div>
+                        <div class="form-check form-switch d-inline-block me-3">
+                            <input class="form-check-input" type="checkbox" id="quickOrderTimeSensitive">
+                            <label class="form-check-label small">Time Sensitive</label>
+                        </div>
+                        <div class="form-check form-switch d-inline-block">
+                            <input class="form-check-input" type="checkbox" id="quickOrderTempControl">
+                            <label class="form-check-label small">Temp Control</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveQuickOrder()">Add Order</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Order Management Modal -->
+<div class="modal fade" id="orderManagementModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-box"></i> Order Management</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="orderMissionId">
+                
+                <!-- Orders List -->
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="mb-0">Orders for this Mission</h6>
+                    <button class="btn btn-sm btn-primary" onclick="showAddOrderForm()">
+                        <i class="fas fa-plus me-1"></i>Add Order
+                    </button>
+                </div>
+                
+                <div id="ordersListContainer">
+                    <!-- Orders will be loaded here -->
+                </div>
+
+                <!-- Add Order Form (hidden by default) -->
+                <div id="addOrderForm" style="display: none;" class="border rounded p-3 mb-3 bg-light">
+                    <h6 class="mb-3">Add New Order</h6>
+                    <div class="row g-3">
+                        <!-- Basic Info -->
+                        <div class="col-md-6">
+                            <label class="form-label">Order Number *</label>
+                            <input type="text" class="form-control" id="newOrderNumber" placeholder="AUTO" readonly>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Category *</label>
+                            <select class="form-select" id="newOrderCategory">
+                                <option value="food">Food</option>
+                                <option value="medical">Medical</option>
+                                <option value="equipment">Equipment</option>
+                                <option value="documents">Documents</option>
+                                <option value="emergency">Emergency</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Priority *</label>
+                            <select class="form-select" id="newOrderPriority">
+                                <option value="low">Low</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="high">High</option>
+                                <option value="critical">Critical</option>
+                            </select>
+                        </div>
+
+                        <!-- Pickup Location -->
+                        <div class="col-12"><hr><h6 class="text-muted">Pickup Location</h6></div>
+                        <div class="col-12">
+                            <label class="form-label">Pickup Point *</label>
+                            <select class="form-select" id="newPickupLocation">
+                                <option value="">-- Select pickup point --</option>
+                                <option value="warehouse_hanoi" data-lat="21.0285" data-lng="105.8542" data-addr="Warehouse Hanoi">📦 Warehouse Hanoi</option>
+                                <option value="store_hoangmai" data-lat="20.9800" data-lng="105.8400" data-addr="Store Hoang Mai">🏪 Store Hoang Mai</option>
+                                <option value="store_caugiay" data-lat="21.0333" data-lng="105.7950" data-addr="Store Cau Giay">🏪 Store Cau Giay</option>
+                                <option value="pharmacy_central" data-lat="21.0245" data-lng="105.8412" data-addr="Central Pharmacy">💊 Central Pharmacy</option>
+                                <option value="distribution_dongda" data-lat="21.0170" data-lng="105.8270" data-addr="Distribution Center Dong Da">🏭 Distribution Dong Da</option>
+                                <option value="custom">📍 Custom Location...</option>
+                            </select>
+                        </div>
+                        
+                        <div id="newPickupCustom" style="display: none;">
+                            <div class="row g-2 mt-2">
+                                <div class="col-md-6">
+                                    <input type="number" step="0.000001" class="form-control" id="newPickupLat" placeholder="Latitude">
+                                </div>
+                                <div class="col-md-6">
+                                    <input type="number" step="0.000001" class="form-control" id="newPickupLng" placeholder="Longitude">
+                                </div>
+                                <div class="col-12">
+                                    <input type="text" class="form-control" id="newPickupAddress" placeholder="Address">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-12 mt-2">
+                            <label class="form-label">Pickup Contact</label>
+                            <input type="text" class="form-control" id="newPickupContact" placeholder="Name or phone">
+                        </div>
+
+                        <!-- Delivery Location -->
+                        <div class="col-12"><hr><h6 class="text-muted">Delivery Location</h6></div>
+                        <div class="col-12">
+                            <label class="form-label">Delivery Waypoint *</label>
+                            <select class="form-select" id="newDeliveryWaypoint">
+                                <option value="">-- Select delivery waypoint --</option>
+                            </select>
+                            <small class="text-muted">Select from mission waypoints or add custom</small>
+                        </div>
+                        
+                        <div class="col-12 mt-2">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="newDeliveryCustomToggle">
+                                <label class="form-check-label">Use custom delivery location</label>
+                            </div>
+                        </div>
+                        
+                        <div id="newDeliveryCustom" style="display: none;">
+                            <div class="row g-2 mt-2">
+                                <div class="col-md-6">
+                                    <input type="number" step="0.000001" class="form-control" id="newDeliveryLat" placeholder="Latitude">
+                                </div>
+                                <div class="col-md-6">
+                                    <input type="number" step="0.000001" class="form-control" id="newDeliveryLng" placeholder="Longitude">
+                                </div>
+                                <div class="col-12">
+                                    <input type="text" class="form-control" id="newDeliveryAddress" placeholder="Address">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-12 mt-2">
+                            <label class="form-label">Delivery Contact</label>
+                            <input type="text" class="form-control" id="newDeliveryContact" placeholder="Name or phone">
+                        </div>
+
+                        <!-- Package Details -->
+                        <div class="col-12"><hr><h6 class="text-muted">Package Details</h6></div>
+                        <div class="col-md-4">
+                            <label class="form-label">Weight (kg)</label>
+                            <input type="number" step="0.1" class="form-control" id="newPackageWeight">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Item Count</label>
+                            <input type="number" class="form-control" id="newItemCount" value="1">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Delivery Fee</label>
+                            <input type="number" step="0.01" class="form-control" id="newDeliveryFee" value="0">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Special Instructions</label>
+                            <textarea class="form-control" id="newSpecialInstructions" rows="2"></textarea>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check form-switch d-inline-block me-3">
+                                <input class="form-check-input" type="checkbox" id="newFragile">
+                                <label class="form-check-label">Fragile</label>
+                            </div>
+                            <div class="form-check form-switch d-inline-block me-3">
+                                <input class="form-check-input" type="checkbox" id="newTimeSensitive">
+                                <label class="form-check-label">Time Sensitive</label>
+                            </div>
+                            <div class="form-check form-switch d-inline-block">
+                                <input class="form-check-input" type="checkbox" id="newTempControlled">
+                                <label class="form-check-label">Temperature Controlled</label>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="col-12 text-end">
+                            <button type="button" class="btn btn-secondary" onclick="hideAddOrderForm()">Cancel</button>
+                            <button type="button" class="btn btn-primary" onclick="saveNewOrder()">
+                                <i class="fas fa-save me-1"></i>Save Order
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
@@ -389,234 +810,5 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-<script>
-    // Initialize map
-    let missionMap = L.map('mission-map').setView([21.0285, 105.8542], 13);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }).addTo(missionMap);
-
-    // Initialize drawing controls
-    let drawnItems = new L.FeatureGroup();
-    missionMap.addLayer(drawnItems);
-
-    let drawControl = new L.Control.Draw({
-        draw: {
-            polygon: {
-                allowIntersection: false,
-                showArea: true
-            },
-            polyline: true,
-            circle: false,
-            rectangle: false,
-            circlemarker: false,
-            marker: true
-        },
-        edit: {
-            featureGroup: drawnItems
-        }
-    });
-    missionMap.addControl(drawControl);
-
-    // Handle drawing events
-    missionMap.on(L.Draw.Event.CREATED, function(event) {
-        let layer = event.layer;
-        drawnItems.addLayer(layer);
-        updateMissionStats();
-    });
-
-    missionMap.on(L.Draw.Event.EDITED, function(event) {
-        updateMissionStats();
-    });
-
-    missionMap.on(L.Draw.Event.DELETED, function(event) {
-        updateMissionStats();
-    });
-
-    // Set drawing mode
-    function setDrawingMode(mode) {
-        // Disable current drawing
-        if (drawControl) {
-            missionMap.removeControl(drawControl);
-        }
-
-        // Configure new drawing control based on mode
-        let drawingOptions = {
-            polygon: false,
-            polyline: false,
-            circle: false,
-            rectangle: false,
-            circlemarker: false,
-            marker: false
-        };
-
-        drawingOptions[mode] = true;
-
-        drawControl = new L.Control.Draw({
-            draw: drawingOptions,
-            edit: {
-                featureGroup: drawnItems
-            }
-        });
-
-        missionMap.addControl(drawControl);
-    }
-
-    // Update mission statistics
-    function updateMissionStats() {
-        let totalDistance = 0;
-        let estDuration = 0;
-        let batteryRequired = 0;
-        let photosEst = 0;
-
-        drawnItems.eachLayer(function(layer) {
-            if (layer instanceof L.Polyline) {
-                totalDistance += layer.getLatLngs().reduce((dist, curr, i, arr) => {
-                    if (i === 0) return 0;
-                    return dist + curr.distanceTo(arr[i - 1]);
-                }, 0);
-            }
-        });
-
-        // Convert to kilometers
-        totalDistance = (totalDistance / 1000).toFixed(2);
-        
-        // Estimate duration based on flight speed
-        let flightSpeed = document.getElementById('flightSpeed').value;
-        estDuration = Math.round((totalDistance * 1000) / (flightSpeed));
-        
-        // Estimate battery usage (rough calculation)
-        batteryRequired = Math.min(Math.round((estDuration / 1200) * 100), 100);
-        
-        // Estimate number of photos
-        let photoInterval = document.getElementById('photoInterval').value;
-        photosEst = Math.round(estDuration / photoInterval);
-
-        // Update display
-        document.getElementById('totalDistance').textContent = `${totalDistance} km`;
-        document.getElementById('estDuration').textContent = new Date(estDuration * 1000).toISOString().substr(11, 8);
-        document.getElementById('batteryRequired').textContent = `${batteryRequired}%`;
-        document.getElementById('photosEst').textContent = photosEst;
-    }
-
-    // Clear mission
-    function clearMission() {
-        drawnItems.clearLayers();
-        updateMissionStats();
-    }
-
-    // Create new mission
-    function createNewMission() {
-        const missionData = {
-            name: document.getElementById('missionName').value,
-            type: document.getElementById('newMissionType').value,
-            startTime: document.getElementById('missionStart').value,
-            description: document.getElementById('missionDescription').value,
-            configuration: {
-                flightHeight: document.getElementById('flightHeight').value,
-                flightSpeed: document.getElementById('flightSpeed').value,
-                returnAltitude: document.getElementById('returnAltitude').value,
-                photoInterval: document.getElementById('photoInterval').value,
-                overlap: document.getElementById('overlap').value,
-                cameraAngle: document.getElementById('cameraAngle').value,
-                minBattery: document.getElementById('minBattery').value,
-                maxDistance: document.getElementById('maxDistance').value,
-                obstacleAvoidance: document.getElementById('obstacleAvoidance').checked,
-                geofencing: document.getElementById('geofencing').checked,
-                emergencyRTH: document.getElementById('emergencyRTH').checked
-            },
-            waypoints: []
-        };
-
-        // Convert drawn items to waypoints
-        drawnItems.eachLayer(function(layer) {
-            if (layer instanceof L.Marker) {
-                missionData.waypoints.push({
-                    type: 'point',
-                    lat: layer.getLatLng().lat,
-                    lng: layer.getLatLng().lng
-                });
-            } else if (layer instanceof L.Polygon) {
-                missionData.waypoints.push({
-                    type: 'area',
-                    points: layer.getLatLngs()[0].map(latlng => ({
-                        lat: latlng.lat,
-                        lng: latlng.lng
-                    }))
-                });
-            } else if (layer instanceof L.Polyline) {
-                missionData.waypoints.push({
-                    type: 'path',
-                    points: layer.getLatLngs().map(latlng => ({
-                        lat: latlng.lat,
-                        lng: latlng.lng
-                    }))
-                });
-            }
-        });
-
-        // Send mission data to server
-        fetch('/api/missions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(missionData)
-        })
-        .then(response => response.json())
-        .then(data => {
-            // Close modal and show success message
-            $('#newMissionModal').modal('hide');
-            // TODO: Show success toast
-            console.log('Mission created:', data);
-        })
-        .catch(error => {
-            console.error('Error creating mission:', error);
-            // TODO: Show error toast
-        });
-    }
-
-    // Save mission configuration
-    function saveMissionConfig() {
-        const config = {
-            flightHeight: document.getElementById('flightHeight').value,
-            flightSpeed: document.getElementById('flightSpeed').value,
-            returnAltitude: document.getElementById('returnAltitude').value,
-            photoInterval: document.getElementById('photoInterval').value,
-            overlap: document.getElementById('overlap').value,
-            cameraAngle: document.getElementById('cameraAngle').value,
-            minBattery: document.getElementById('minBattery').value,
-            maxDistance: document.getElementById('maxDistance').value,
-            obstacleAvoidance: document.getElementById('obstacleAvoidance').checked,
-            geofencing: document.getElementById('geofencing').checked,
-            emergencyRTH: document.getElementById('emergencyRTH').checked
-        };
-
-        // Save configuration to server
-        fetch('/api/mission-config', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(config)
-        })
-        .then(response => response.json())
-        .then(data => {
-            // TODO: Show success toast
-            console.log('Configuration saved:', data);
-        })
-        .catch(error => {
-            console.error('Error saving configuration:', error);
-            // TODO: Show error toast
-        });
-    }
-
-    // Initialize event listeners
-    document.addEventListener('DOMContentLoaded', function() {
-        // Update mission stats when flight parameters change
-        ['flightSpeed', 'photoInterval'].forEach(id => {
-            document.getElementById(id).addEventListener('change', updateMissionStats);
-        });
-    });
-</script>
+<script src="{{ url_for('static', filename='js/mission_management.js') }}"></script>
 {% endblock %}

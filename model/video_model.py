@@ -4,12 +4,7 @@ logger = logging.getLogger(__name__)
 
 class VideoStream:
     def __init__(self, device_id, stream_url=None, webrtc_config=None):
-        """
-        Args:
-            device_id (str): ID của thiết bị (Raspberry Pi)
-            stream_url (str, optional): URL của stream video. Mặc định là None.
-            webrtc_config (dict, optional): Cấu hình WebRTC. Mặc định là None.
-        """
+        
         self.device_id = device_id
         self.stream_url = stream_url
         self.webrtc_config = webrtc_config or {}
