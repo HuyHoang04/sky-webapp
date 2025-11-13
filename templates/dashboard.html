@@ -311,10 +311,11 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='js/webrtc_client.js') }}"></script>
 <script src="{{ url_for('static', filename='js/video-layout.js') }}"></script>
 <script>
-    // Khởi tạo kết nối Socket.IO
-    const socket = io();
+    // Khởi tạo kết nối Socket.IO và gán global để video-layout.js dùng
+    window.socket = io();
     
     // Khởi tạo bản đồ
     let map = L.map('map').setView([21.0285, 105.8542], 13);

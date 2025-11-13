@@ -27,6 +27,7 @@ from aiortc import (
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from av import VideoFrame
 from camera_utils import setup_camera, load_onnx_model
+from capture_api import start_capture_server
 from gps_utils import read_gps, gps_task
 from video_stream import ObjectDetectionStreamTrack
 
@@ -39,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger("drone-client")
 
 # Default configuration
-DEFAULT_SERVER_URL = "https://popular-catfish-slightly.ngrok-free.app"
+DEFAULT_SERVER_URL = "https://kanisha-unannexable-laraine.ngrok-free.dev"
 DEFAULT_DEVICE_ID = "drone-camera"  # Fixed device ID for easier debugging
 DEFAULT_DEVICE_NAME = "Drone Camera"
 DEFAULT_FPS = 15
@@ -65,6 +66,8 @@ running = True
 ort_session = None
 reconnect_task = None
 video_track = None
+capture_server_task = None
+pending_remote_ice = []
 
 
 async def create_peer_connection():
@@ -242,6 +245,16 @@ async def webrtc_answer(data):
             answer = RTCSessionDescription(sdp=data['sdp'], type=data['type'])
             await peer_connection.setRemoteDescription(answer)
             logger.info("WebRTC answer received and set successfully")
+            # After setting remote description, add any buffered ICE candidates
+            global pending_remote_ice
+            if pending_remote_ice:
+                logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
+                for cand in pending_remote_ice:
+                    try:
+                        await peer_connection.addIceCandidate(cand)
+                    except Exception as e:
+                        logger.error(f"Failed to add buffered ICE candidate: {e}")
+                pending_remote_ice = []
         else:
             logger.error("Received webrtc_answer but no peer connection exists")
     except Exception as e:
@@ -255,16 +268,35 @@ async def webrtc_answer(data):
 async def webrtc_ice_candidate(data):
     """Handle ICE candidate from server"""
     try:
-        if peer_connection and peer_connection.connectionState != "closed":
-            candidate = RTCIceCandidate(
-                data['candidate']['candidate'],
-                sdpMid=data['candidate'].get('sdpMid'),
-                sdpMLineIndex=data['candidate'].get('sdpMLineIndex'),
-            )
-            await peer_connection.addIceCandidate(candidate)
-            logger.debug(f"Added remote ICE candidate: {candidate.candidate}")
+        candidate_payload = data.get('candidate') if isinstance(data, dict) else None
+        if not candidate_payload:
+            logger.debug('webrtc_ice_candidate called with no candidate payload')
+            return
+
+        # Normalize payload: aiortc accepts a dict with keys 'candidate', 'sdpMid', 'sdpMLineIndex'
+        if isinstance(candidate_payload, dict) and 'candidate' in candidate_payload:
+            candidate_init = {
+                'candidate': candidate_payload.get('candidate'),
+                'sdpMid': candidate_payload.get('sdpMid'),
+                'sdpMLineIndex': candidate_payload.get('sdpMLineIndex')
+            }
+        elif isinstance(candidate_payload, str):
+            candidate_init = {'candidate': candidate_payload}
         else:
-            logger.warning("Received ICE candidate but peer connection is not available")
+            candidate_init = candidate_payload
+
+        # If peer connection or its remote description is not ready yet, buffer the candidate
+        if not peer_connection or getattr(peer_connection, 'remoteDescription', None) is None:
+            logger.debug('PeerConnection or remoteDescription not ready, buffering ICE candidate')
+            pending_remote_ice.append(candidate_init)
+            return
+
+        try:
+            await peer_connection.addIceCandidate(candidate_init)
+            logger.debug('Added remote ICE candidate')
+        except Exception as e:
+            logger.error(f'Failed to add ICE candidate immediately: {e}. Buffering candidate.')
+            pending_remote_ice.append(candidate_init)
     except Exception as e:
         logger.error(f"Error adding ICE candidate: {e}")
 
@@ -312,6 +344,15 @@ async def cleanup():
     if webcam:
         webcam.release()
         webcam = None
+
+    # Stop capture API server if running
+    global capture_server_task
+    if capture_server_task and not capture_server_task.done():
+        capture_server_task.cancel()
+        try:
+            await capture_server_task
+        except Exception:
+            pass
     
     # Disconnect from server
     if sio.connected:
@@ -369,6 +410,12 @@ async def main():
                 return
     
     logger.info("Camera setup successful")
+    # Start capture API server so other services can request frames/detections
+    global capture_server_task
+    try:
+        capture_server_task = asyncio.create_task(start_capture_server(webcam, ort_session, host='0.0.0.0', port=8080))
+    except Exception as e:
+        logger.error(f"Failed to start capture server: {e}")
     
     # Start health check task
     health_check_task = asyncio.create_task(health_check())

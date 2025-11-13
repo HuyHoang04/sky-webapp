@@ -30,3 +30,13 @@ def handle_gps_data(data):
     except Exception as e:
         logger.error(f"[GPS] Error processing GPS data: {e}", exc_info=True)
         return {'status': 'error', 'message': str(e)}
+
+
+@gps_blueprint.route('/api/gps', methods=['GET'])
+def get_all_gps_data():
+    """Return current GPS data store as JSON for dashboard consumption"""
+    try:
+        return jsonify(gps_data_store)
+    except Exception as e:
+        logger.error(f"[GPS API] Error returning gps data: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to retrieve GPS data'}), 500

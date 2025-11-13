@@ -13,24 +13,8 @@ import threading
 logger = logging.getLogger("drone-client")
 
 
-class FrameBuffer:
-    """Buffer to store frames from camera to reduce latency"""
-    def __init__(self, max_size=3):
-        self.buffer = []
-        self.max_size = max_size
-        self.lock = threading.Lock()
-   
-    def add_frame(self, frame):
-        with self.lock:
-            self.buffer.append(frame)
-            if len(self.buffer) > self.max_size:
-                self.buffer.pop(0)
-   
-    def get_latest_frame(self):
-        with self.lock:
-            if not self.buffer:
-                return None
-            return self.buffer[-1]
+# The camera capture is now handled by CameraManager in drone-app/camera_utils.py
+# Video stream will call camera.get_frame() to retrieve the latest frame.
 
 
 class ObjectDetectionStreamTrack(VideoStreamTrack):
@@ -48,23 +32,15 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
         self.counter = 0
         self.last_frame_time = time.time()
         self.ort_session = ort_session
-        self.frame_buffer = FrameBuffer()
         self.running = True
         self.active = True
-       
-        # Start background thread for camera capture
-        self.capture_thread = threading.Thread(target=self._capture_frames)
-        self.capture_thread.daemon = True
-        self.capture_thread.start()
    
     def _capture_frames(self):
         """Background thread to continuously capture frames"""
         while self.running:
             try:
-                frame = self.camera.capture_array()  # Picamera2 uses capture_array(), not read()
-                # Convert RGB to BGR for cv2 compatibility
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                self.frame_buffer.add_frame(frame)
+                # Legacy: capture loop moved to CameraManager. Keep method for compatibility but not used.
+                frame = None
             except Exception as e:
                 # If camera capture fails, wait a bit before trying again
                 time.sleep(0.01)
@@ -94,8 +70,23 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
         if elapsed < target_elapsed:
             await asyncio.sleep(target_elapsed - elapsed)
        
-        # Get the latest frame from buffer
-        frame = self.frame_buffer.get_latest_frame()
+        # Get the latest frame from the shared camera manager
+        try:
+            # camera_manager.get_frame() should return a BGR ndarray or None
+            frame = None
+            if hasattr(self.camera, 'get_frame'):
+                frame = self.camera.get_frame()
+            else:
+                # Fallback to legacy API (capture_array)
+                frame = self.camera.capture_array()
+                # If capture_array returns RGB, convert to BGR conservatively
+                try:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"Error getting frame from camera: {e}")
+            frame = None
        
         # If no frame is available, create a blank one
         if frame is None:

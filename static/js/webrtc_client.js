@@ -141,10 +141,19 @@ class WebRTCClient {
         this.peerConnection.ontrack = (event) => {
             if (event.streams && event.streams[0]) {
                 console.log('Đã nhận video track từ drone');
+                // Ensure the element is muted to allow autoplay in modern browsers
+                try {
+                    this.videoElement.muted = true;
+                    this.videoElement.setAttribute('muted', '');
+                } catch (e) {
+                    // ignore
+                }
+
                 this.videoElement.srcObject = event.streams[0];
-                
-                // Đảm bảo video sẽ tự động play
+
+                // Try to play when metadata is loaded; set muted before play to avoid NotAllowedError
                 this.videoElement.onloadedmetadata = () => {
+                    // Some browsers still block autoplay; ensure we try to play but catch errors
                     this.videoElement.play().catch(e => {
                         console.warn('Không thể tự động phát video:', e);
                     });
