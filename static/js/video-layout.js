@@ -158,7 +158,7 @@ class VideoLayoutManager {
         const videoId = `videoStream${deviceId.replace(/\D/g, '') || '1'}`;
         
         videoCell.innerHTML = `
-            <video id="${videoId}" autoplay playsinline></video>
+            <video id="${videoId}" autoplay playsinline muted></video>
             <div class="video-stats">
                 <div>
                     <i class="fas fa-signal"></i>

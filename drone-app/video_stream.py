@@ -13,24 +13,8 @@ import threading
 logger = logging.getLogger("drone-client")
 
 
-class FrameBuffer:
-    """Buffer to store frames from camera to reduce latency"""
-    def __init__(self, max_size=3):
-        self.buffer = []
-        self.max_size = max_size
-        self.lock = threading.Lock()
-   
-    def add_frame(self, frame):
-        with self.lock:
-            self.buffer.append(frame)
-            if len(self.buffer) > self.max_size:
-                self.buffer.pop(0)
-   
-    def get_latest_frame(self):
-        with self.lock:
-            if not self.buffer:
-                return None
-            return self.buffer[-1]
+# The camera capture is now handled by CameraManager in drone-app/camera_utils.py
+# Video stream will call camera.get_frame() to retrieve the latest frame.
 
 
 class ObjectDetectionStreamTrack(VideoStreamTrack):
@@ -48,23 +32,15 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
         self.counter = 0
         self.last_frame_time = time.time()
         self.ort_session = ort_session
-        self.frame_buffer = FrameBuffer()
         self.running = True
         self.active = True
-       
-        # Start background thread for camera capture
-        self.capture_thread = threading.Thread(target=self._capture_frames)
-        self.capture_thread.daemon = True
-        self.capture_thread.start()
    
     def _capture_frames(self):
         """Background thread to continuously capture frames"""
         while self.running:
             try:
-                frame = self.camera.capture_array()  # Picamera2 uses capture_array(), not read()
-                # Convert RGB to BGR for cv2 compatibility
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                self.frame_buffer.add_frame(frame)
+                # Legacy: capture loop moved to CameraManager. Keep method for compatibility but not used.
+                frame = None
             except Exception as e:
                 # If camera capture fails, wait a bit before trying again
                 time.sleep(0.01)
@@ -94,8 +70,23 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
         if elapsed < target_elapsed:
             await asyncio.sleep(target_elapsed - elapsed)
        
-        # Get the latest frame from buffer
-        frame = self.frame_buffer.get_latest_frame()
+        # Get the latest frame from the shared camera manager
+        try:
+            # camera_manager.get_frame() should return a BGR ndarray or None
+            frame = None
+            if hasattr(self.camera, 'get_frame'):
+                frame = self.camera.get_frame()
+            else:
+                # Fallback to legacy API (capture_array)
+                frame = self.camera.capture_array()
+                # If capture_array returns RGB, convert to BGR conservatively
+                try:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"Error getting frame from camera: {e}")
+            frame = None
        
         # If no frame is available, create a blank one
         if frame is None:
@@ -110,6 +101,24 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
                 2
             )
         else:
+            # Defensive normalization: ensure frame has 3 channels in BGR order
+            try:
+                if isinstance(frame, np.ndarray):
+                    if frame.ndim == 2:
+                        # grayscale -> BGR
+                        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+                    elif frame.ndim == 3 and frame.shape[2] == 4:
+                        # 4-channel image (e.g., RGBA/BGRA) -> try to convert to BGR
+                        try:
+                            frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+                        except Exception:
+                            try:
+                                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                            except Exception:
+                                # Fallback: drop alpha
+                                frame = frame[:, :, :3]
+            except Exception as e:
+                logger.debug(f"Frame normalization error: {e}")
             # Only perform object detection if ort_session exists and not every frame
             # to reduce CPU usage (e.g., every 3rd frame)
             if self.ort_session is not None and self.counter % 3 == 0:
@@ -117,7 +126,17 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
 
 
         # Convert to VideoFrame with proper timing
-        video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+        # Ensure the ndarray has shape (H, W, 3) and dtype uint8 before converting
+        try:
+            if not (isinstance(frame, np.ndarray) and frame.ndim == 3 and frame.shape[2] == 3):
+                # As a last resort, convert or create a blank frame
+                frame = cv2.resize(np.zeros((self.height, self.width, 3), np.uint8), (self.width, self.height))
+            video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+        except Exception as e:
+            logger.error(f"Failed to convert ndarray to VideoFrame: {e}")
+            # Fallback to a blank frame
+            fallback = np.zeros((self.height, self.width, 3), np.uint8)
+            video_frame = VideoFrame.from_ndarray(fallback, format="bgr24")
         video_frame.pts = self.counter
         video_frame.time_base = Fraction(1, self.fps)
         self.last_frame_time = time.time()
