@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import RPi.GPIO as GPIO
 import os
 import subprocess
@@ -6,12 +7,13 @@ from time import sleep
 import time
 import cloudinary
 import cloudinary.uploader
+import requests # 👈 THÊM: Thư viện để gửi yêu cầu HTTP
 
 # ----------------- CẤU HÌNH -----------------
 BUTTON_PIN = 17
 RECORD_SECONDS = 15
 SAMPLE_RATE = 48000
-VOLUME_GAIN = 3.5  # Điều chỉnh từ 2 → 5 để tránh rè
+VOLUME_GAIN = 3.5
 
 HELP_SOUND = "/home/pi/Documents/Drone2025/music/Help_me.wav"
 SAVE_DIR = "/home/pi/Documents/Drone2025/mic_help"
@@ -25,7 +27,12 @@ cloudinary.config(
   api_key = "476417423893251",
   api_secret = "4oBdZ9bPANC5_Eg1pLWAnKyr3m8"
 )
-CLOUD_FOLDER = "help"  # folder trên Cloudinary
+CLOUD_FOLDER = "help"
+
+# 🚀 CẤU HÌNH AI SERVICE MỚI
+# Thay thế IP và Port bằng địa chỉ thực tế của server đang chạy FastAPI
+AI_SERVICE_URL = "https://vincent-subporphyritic-nonextrinsically.ngrok-free.dev/analyze_from_url/" 
+# Ví dụ: "http://192.168.1.100:8000/analyze_from_url/"
 # --------------------------------------------
 
 # Tạo thư mục lưu file nếu chưa có
@@ -38,6 +45,9 @@ GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 print("Hệ thống sẵn sàng — nhấn nút để phát Help_me.wav rồi ghi âm...")
 
 # ----------------- HÀM -----------------
+# ... (Các hàm play_sound, get_next_filename, record_audio, convert_to_mp3 không đổi)
+# ...
+
 def play_sound():
     """Phát Help_me.wav qua PulseAudio"""
     subprocess.run(
@@ -116,11 +126,30 @@ def convert_to_mp3(wav_path):
     print(f"Đã lưu file MP3: {mp3_path}")
     return mp3_path
 
+def send_to_ai_service(url):
+    """Gửi URL Cloudinary tới AI Service để phân tích"""
+    print(f"Gửi URL tới AI Service: {AI_SERVICE_URL}")
+    payload = {"audio_url": url}
+    try:
+        # Sử dụng timeout 120s (2 phút) vì mô hình LLM có thể chậm
+        response = requests.post(AI_SERVICE_URL, json=payload, timeout=120) 
+        response.raise_for_status() # Raise exception cho 4xx hoặc 5xx lỗi
+        data = response.json()
+        print("✅ Phân tích AI thành công:")
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f" Gửi yêu cầu tới AI Service thất bại: {e}")
+        return False
+    except json.JSONDecodeError:
+        print(f"Phản hồi từ AI Service không phải JSON: {response.text}")
+        return False
+
 def upload_to_cloudinary(mp3_path):
     """Upload file MP3 lên Cloudinary và xóa sau khi upload thành công"""
     if not os.path.exists(mp3_path):
         print("File MP3 không tồn tại, bỏ qua upload.")
-        return False
+        return None # Trả về None nếu không thành công
 
     try:
         print(f"Uploading {mp3_path} ...")
@@ -135,10 +164,10 @@ def upload_to_cloudinary(mp3_path):
         # Xóa file sau khi upload thành công
         os.remove(mp3_path)
         print(f"File MP3 đã bị xóa: {mp3_path}")
-        return True
+        return secure_url # Trả về URL thành công
     except Exception as e:
         print("Upload thất bại:", e)
-        return False
+        return None
 
 # ----------------- VÒNG LẶP CHÍNH -----------------
 while True:
@@ -154,9 +183,14 @@ while True:
         # Chuyển sang MP3
         mp3_file = convert_to_mp3(wav_file)
 
-        # Upload lên Cloudinary và xóa file sau khi upload
+        # Upload lên Cloudinary và lấy URL
+        cloudinary_url = None
         if mp3_file:
-            upload_to_cloudinary(mp3_file)
+            cloudinary_url = upload_to_cloudinary(mp3_file)
+            
+        # 🚀 Gửi URL tới AI Service nếu upload thành công
+        if cloudinary_url:
+            send_to_ai_service(cloudinary_url)
 
         print("Quay lại chế độ chờ...\n")
         sleep(1)  # chống dội nút
