@@ -7,8 +7,12 @@ import json
 import requests
 import tempfile
 import re
+import signal
+import atexit
+from collections import deque
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import fastapi
+from fastapi import Query
 import threading
 import queue
 
@@ -37,6 +41,8 @@ def analysis_worker():
             job = analysis_queue.get()
             
             if job is None:  # Poison pill to stop worker
+                print("[QUEUE WORKER] Received shutdown signal, exiting gracefully")
+                analysis_queue.task_done()
                 break
             
             print(f"[QUEUE] Processing analysis job for record {job['record_id']} (Queue size: {analysis_queue.qsize()})")
@@ -50,10 +56,63 @@ def analysis_worker():
         except Exception as e:
             print(f"[QUEUE WORKER ERROR] {str(e)}")
             analysis_queue.task_done()
+    
+    print("[QUEUE WORKER] Worker thread terminated cleanly")
 
-# Start background worker thread
-analysis_worker_thread = threading.Thread(target=analysis_worker, daemon=True)
-analysis_worker_thread.start() 
+# Start background worker thread (non-daemon for graceful shutdown)
+analysis_worker_thread = threading.Thread(target=analysis_worker, daemon=False)
+analysis_worker_thread.start()
+
+# Shutdown state flag to prevent duplicate shutdowns
+_shutdown_initiated = False
+_shutdown_lock = threading.Lock()
+
+def shutdown_analysis_worker():
+    """
+    Gracefully shutdown the analysis worker thread (idempotent)
+    Sends poison pill and waits for thread to finish current job
+    Safe to call multiple times - will only shutdown once
+    """
+    global _shutdown_initiated
+    
+    with _shutdown_lock:
+        if _shutdown_initiated:
+            print("[SHUTDOWN] Already initiated, skipping duplicate shutdown")
+            return
+        _shutdown_initiated = True
+    
+    print("[SHUTDOWN] Initiating graceful shutdown of analysis worker...")
+    
+    # Send poison pill to stop the worker
+    analysis_queue.put(None)
+    
+    # Wait for worker to finish with timeout
+    print("[SHUTDOWN] Waiting for worker thread to complete (timeout: 30s)...")
+    analysis_worker_thread.join(timeout=30)
+    
+    if analysis_worker_thread.is_alive():
+        print("[SHUTDOWN]  Worker thread did not finish within timeout")
+    else:
+        print("[SHUTDOWN]  Worker thread finished cleanly")
+
+# Register shutdown handlers
+def signal_handler(signum, frame):
+    """
+    Handle SIGTERM and SIGINT signals
+    Cleanup worker thread and let FastAPI/Uvicorn handle graceful shutdown
+    """
+    print(f"[SIGNAL] Received signal {signum}, initiating graceful shutdown...")
+    shutdown_analysis_worker()
+    # Don't call exit() - let FastAPI/Uvicorn handle graceful shutdown
+
+# Register for SIGTERM (docker stop, systemd stop, etc.)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# Register for SIGINT (Ctrl+C)
+signal.signal(signal.SIGINT, signal_handler)
+
+# Register for normal exit (atexit) - this will handle non-signal exits
+atexit.register(shutdown_analysis_worker) 
 
 # ==== DEVICE & DTYPE ====
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -139,7 +198,9 @@ def parse_llm_output(text_output):
     except Exception as e:
         return {"error": str(e), "raw_output": text_output}
 
-RESULTS = []
+# Bounded results storage (keeps last 1000 results)
+RESULTS = deque(maxlen=1000)
+results_lock = threading.Lock()
 
 def _process_analysis_job(job):
     """
@@ -172,7 +233,9 @@ def _process_analysis_job(job):
             "time": round(time.time() - start_time, 2)
         }
         
-        RESULTS.append(analysis_result)
+        # Thread-safe append to results
+        with results_lock:
+            RESULTS.append(analysis_result)
 
         try:
             callback_payload = {
@@ -198,7 +261,7 @@ def _process_analysis_job(job):
                 "stage": "analysis"
             }
             requests.post(WEB_CALLBACK_URL, json=error_payload, timeout=30)
-            print(f"[CALLBACK 2] ❌ Analysis error sent to Web App")
+            print(f"[CALLBACK 2]  Analysis error sent to Web App")
         except Exception as send_e:
             print(f"[CALLBACK 2] Failed to send error: {send_e}")
 
@@ -217,17 +280,22 @@ async def analyze_voice(payload: dict):
     }
     """
     start = time.time()
-    audio_url = payload.get("audio_url")
-    record_id = payload.get("record_id")  # Get record_id from Web App
-
-    if not audio_url:
-        return {"success": False, "error": "Thiếu audio_url"}
     
-    if not record_id:
-        return {"success": False, "error": "Thiếu record_id"}
-
+    # Initialize variables early to avoid UnboundLocalError in exception handlers
+    record_id = None
+    audio_url = None
     tmp_path = None
+    
     try:
+        # Extract and validate required fields
+        audio_url = payload.get("audio_url")
+        record_id = payload.get("record_id")
+
+        if not audio_url:
+            return {"success": False, "error": "Thiếu audio_url"}
+        
+        if not record_id:
+            return {"success": False, "error": "Thiếu record_id"}
         # Tải file âm thanh từ URL (Cloudinary trả về MP3)
         print(f"[DOWNLOAD] Downloading audio from {audio_url}...")
         r = requests.get(audio_url)
@@ -286,9 +354,9 @@ async def analyze_voice(payload: dict):
                 "stage": "transcription"  # Đánh dấu đây là callback transcription
             }
             requests.post(WEB_CALLBACK_URL, json=callback_payload, timeout=30)
-            print(f"[CALLBACK 1] ⚡ Transcription sent to Web App (fast response)")
+            print(f"[CALLBACK 1]  Transcription sent to Web App (fast response)")
         except Exception as send_e:
-            print(f"[CALLBACK 1] ❌ Failed to send transcription to Web App: {send_e}")
+            print(f"[CALLBACK 1]  Failed to send transcription to Web App: {send_e}")
 
         # ============ ADD ANALYSIS JOB TO QUEUE (CHẠY BACKGROUND) ============
         analysis_job = {
@@ -314,17 +382,20 @@ async def analyze_voice(payload: dict):
     except Exception as e:
         print(f"[API] An error occurred: {str(e)}")
         
-        # Callback error to Web App
-        try:
-            error_payload = {
-                "record_id": record_id,
-                "success": False,
-                "error": str(e)
-            }
-            requests.post(WEB_CALLBACK_URL, json=error_payload, timeout=30)
-            print(f"[API] Error sent to Web App callback")
-        except Exception as send_e:
-            print(f"[API] Failed to send error to Web App: {send_e}")
+        # Callback error to Web App (only if we have a valid record_id)
+        if record_id is not None:
+            try:
+                error_payload = {
+                    "record_id": record_id,
+                    "success": False,
+                    "error": str(e)
+                }
+                requests.post(WEB_CALLBACK_URL, json=error_payload, timeout=30)
+                print(f"[API] Error sent to Web App callback for record {record_id}")
+            except Exception as send_e:
+                print(f"[API] Failed to send error to Web App: {send_e}")
+        else:
+            print(f"[API] No record_id available, skipping error callback")
         
         return {"success": False, "error": str(e)}
 
@@ -342,9 +413,42 @@ def queue_status():
     }
 
 @app.get("/results")
-def get_results():
-    """Get all analysis results"""
-    return {"results": RESULTS}
+def get_results(
+    limit: int = Query(default=100, ge=1, le=1000, description="Number of results to return"),
+    offset: int = Query(default=0, ge=0, description="Number of results to skip")
+):
+    """
+    Get paginated analysis results
+    
+    Query Parameters:
+    - limit: Number of results per page (1-1000, default: 100)
+    - offset: Number of results to skip (default: 0)
+    
+    Returns:
+    - results: List of analysis results for the requested page
+    - total: Total number of results available
+    - limit: Applied limit
+    - offset: Applied offset
+    - has_more: Whether there are more results available
+    """
+    with results_lock:
+        # Convert deque to list for slicing (thread-safe)
+        results_list = list(RESULTS)
+        total_count = len(results_list)
+        
+        # Apply pagination
+        start_idx = offset
+        end_idx = offset + limit
+        paginated_results = results_list[start_idx:end_idx]
+        
+        return {
+            "results": paginated_results,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+            "has_more": end_idx < total_count,
+            "page": (offset // limit) + 1 if limit > 0 else 1
+        }
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

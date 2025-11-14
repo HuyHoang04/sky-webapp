@@ -17,8 +17,14 @@ voice_blueprint = Blueprint('voice', __name__)
 from controller.gps_controller import gps_data_store
 
 # AI Service URL (analytics-voice-server endpoint)
-AI_SERVICE_URL = os.getenv('AI_SERVICE_URL', 'https://vincent-subporphyritic-nonextrinsically.ngrok-free.dev/analyze')
+AI_SERVICE_URL = os.getenv('AI_SERVICE_URL')
+AI_ANALYSIS_ENABLED = bool(AI_SERVICE_URL)
 
+if not AI_ANALYSIS_ENABLED:
+    logger.warning("[VOICE] ⚠️  AI_SERVICE_URL not configured, AI analysis will be disabled")
+    logger.warning("[VOICE] Set AI_SERVICE_URL environment variable to enable AI transcription and analysis")
+else:
+    logger.info(f"[VOICE] AI analysis enabled, using service at: {AI_SERVICE_URL}")
 # ============================================
 # WEB ROUTES
 # ============================================
@@ -72,6 +78,22 @@ def handle_voice_records():
                 altitude = 10
                 logger.warning(f"[VOICE] No GPS stream available, using fallback coordinates")
             
+            # Safely parse and validate duration (default: 15 seconds, bounds: 1-300 seconds)
+            duration = 15  # default
+            try:
+                duration_input = data.get('duration', 15)
+                duration = int(duration_input)
+                # Enforce reasonable bounds (1 second to 5 minutes)
+                if duration < 1:
+                    duration = 1
+                    logger.warning(f"[VOICE] Duration too low, clamped to 1 second")
+                elif duration > 300:
+                    duration = 300
+                    logger.warning(f"[VOICE] Duration too high, clamped to 300 seconds")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"[VOICE] Invalid duration value '{data.get('duration')}': {e}, using default 15s")
+                duration = 15
+            
             with get_db() as db:
                 service = VoiceRecordService(db)
                 
@@ -82,34 +104,43 @@ def handle_voice_records():
                     longitude=float(longitude),
                     altitude=float(altitude),
                     audio_url=data['audio_url'],
-                    duration=int(data.get('duration', 15))
+                    duration=duration
                 )
                 
                 record_id = record.id
-                logger.info(f"[VOICE] Created record {record_id}, triggering AI analysis in background")
+                logger.info(f"[VOICE] Created record {record_id} (duration: {duration}s)")
             
-            # Trigger AI analysis in background thread (non-blocking)
-            def analyze_in_background():
-                try:
-                    with get_db() as db_bg:
-                        service_bg = VoiceRecordService(db_bg)
-                        service_bg.trigger_ai_analysis(record_id, AI_SERVICE_URL)
-                except Exception as e:
-                    logger.error(f"[VOICE] Background AI analysis error: {str(e)}")
-            
-            analysis_thread = threading.Thread(target=analyze_in_background)
-            analysis_thread.daemon = True
-            analysis_thread.start()
+            # Trigger AI analysis only if enabled
+            if AI_ANALYSIS_ENABLED:
+                logger.info(f"[VOICE] Triggering AI analysis for record {record_id}")
+                
+                # Trigger AI analysis in background thread (non-blocking)
+                def analyze_in_background():
+                    try:
+                        with get_db() as db_bg:
+                            service_bg = VoiceRecordService(db_bg)
+                            service_bg.trigger_ai_analysis(record_id, AI_SERVICE_URL)
+                    except Exception as e:
+                        logger.error(f"[VOICE] Background AI analysis error: {str(e)}")
+                
+                analysis_thread = threading.Thread(target=analyze_in_background)
+                analysis_thread.daemon = True
+                analysis_thread.start()
+            else:
+                logger.warning(f"[VOICE] AI analysis skipped for record {record_id} (AI_SERVICE_URL not configured)")
             
             # Return immediately to client with record data
             with get_db() as db:
                 service = VoiceRecordService(db)
                 record = service.get_record(record_id)
                 
+                response_message = 'Voice record created, AI analysis in progress' if AI_ANALYSIS_ENABLED else 'Voice record created (AI analysis disabled - configure AI_SERVICE_URL to enable)'
+                
                 return jsonify({
                     'status': 'success',
-                    'message': 'Voice record created, AI analysis in progress',
-                    'record': record.to_dict()
+                    'message': response_message,
+                    'record': record.to_dict(),
+                    'ai_analysis_enabled': AI_ANALYSIS_ENABLED
                 }), 201
                 
         except Exception as e:

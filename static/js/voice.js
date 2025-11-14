@@ -8,12 +8,31 @@ let voiceMap;
 let allRecords = [];
 let markers = [];
 
+// HTML escape utility to prevent XSS
+function escapeHtml(unsafe) {
+    if (unsafe === null || unsafe === undefined) return '';
+    return String(unsafe)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     initializeMap();
     loadVoiceRecords();
     // Auto refresh every 30 seconds
     setInterval(loadVoiceRecords, 30000);
+    
+    // Add keyboard support for voice cards
+    document.addEventListener('keydown', function(e) {
+        if (e.target.classList.contains('voice-card') && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            e.target.click();
+        }
+    });
 });
 
 // Initialize Leaflet Map
@@ -43,55 +62,177 @@ async function loadVoiceRecords() {
     }
 }
 
-// Display records in sidebar
+// Display records in sidebar (XSS-safe using DOM APIs)
 function displayRecords(records) {
     const container = document.getElementById('voiceList');
     
+    // Clear existing content
+    container.innerHTML = '';
+    
     if (records.length === 0) {
-        container.innerHTML = '<p class="text-center text-muted py-3">No voice records yet</p>';
+        const emptyMsg = document.createElement('p');
+        emptyMsg.className = 'text-center text-muted py-3';
+        emptyMsg.textContent = 'No voice records yet';
+        container.appendChild(emptyMsg);
         return;
     }
     
-    let html = '';
     records.forEach(record => {
-        const statusClass = record.is_resolved ? 'voice-resolved' : (record.is_urgent ? 'voice-urgent' : '');
-        const recordDate = new Date(record.recorded_at).toLocaleString();
-        const priorityBadge = getPriorityBadge(record.priority);
-        const transcriptionStatus = getTranscriptionBadge(record.transcription_status);
-        const analysisStatus = getAnalysisBadge(record.analysis_status);
+        // Create voice card element
+        const card = document.createElement('div');
+        card.className = 'voice-card p-3';
         
-        html += `
-            <div class="voice-card ${statusClass} p-3" onclick="viewRecordDetail(${record.id})">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <div>
-                        <h6 class="mb-1">${record.device_id}</h6>
-                        <small class="text-muted">${recordDate}</small>
-                    </div>
-                    ${priorityBadge}
-                </div>
-                
-                ${record.transcribed_text ? `
-                    <div class="small mb-2">
-                        <i class="fas fa-comment-dots"></i> "${record.transcribed_text.substring(0, 60)}..."
-                    </div>
-                ` : ''}
-                
-                ${record.analysis_intent ? `
-                    <div class="small mb-2">
-                        <i class="fas fa-brain"></i> Intent: <strong>${record.analysis_intent}</strong>
-                    </div>
-                ` : ''}
-                
-                <div class="d-flex gap-2 flex-wrap">
-                    ${transcriptionStatus}
-                    ${analysisStatus}
-                    ${record.is_resolved ? '<span class="badge bg-success">Resolved</span>' : ''}
-                </div>
-            </div>
-        `;
+        // Add status classes
+        if (record.is_resolved) {
+            card.classList.add('voice-resolved');
+        } else if (record.is_urgent) {
+            card.classList.add('voice-urgent');
+        }
+        
+        // Set accessibility attributes
+        card.setAttribute('role', 'button');
+        card.setAttribute('tabindex', '0');
+        const ariaLabel = record.is_resolved ? `Resolved: ${record.device_id}` : record.device_id;
+        card.setAttribute('aria-label', ariaLabel);
+        
+        // Add click handler
+        card.onclick = () => viewRecordDetail(record.id);
+        
+        // Add visually-hidden resolved indicator for screen readers
+        if (record.is_resolved) {
+            const hiddenSpan = document.createElement('span');
+            hiddenSpan.className = 'visually-hidden';
+            hiddenSpan.textContent = 'Resolved - ';
+            card.appendChild(hiddenSpan);
+        }
+        
+        // Create header row (device ID, date, priority badge)
+        const headerRow = document.createElement('div');
+        headerRow.className = 'd-flex justify-content-between align-items-start mb-2';
+        
+        const leftCol = document.createElement('div');
+        
+        const deviceHeading = document.createElement('h6');
+        deviceHeading.className = 'mb-1';
+        deviceHeading.textContent = record.device_id; // Safe: textContent escapes HTML
+        leftCol.appendChild(deviceHeading);
+        
+        const dateSmall = document.createElement('small');
+        dateSmall.className = 'text-muted';
+        const recordDate = new Date(record.recorded_at).toLocaleString();
+        dateSmall.textContent = recordDate;
+        leftCol.appendChild(dateSmall);
+        
+        headerRow.appendChild(leftCol);
+        headerRow.appendChild(createPriorityBadgeElement(record.priority));
+        card.appendChild(headerRow);
+        
+        // Add transcribed text preview if available
+        if (record.transcribed_text) {
+            const transcriptDiv = document.createElement('div');
+            transcriptDiv.className = 'small mb-2';
+            
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-comment-dots';
+            transcriptDiv.appendChild(icon);
+            
+            const textNode = document.createTextNode(' "' + record.transcribed_text.substring(0, 60) + '..."');
+            transcriptDiv.appendChild(textNode);
+            
+            card.appendChild(transcriptDiv);
+        }
+        
+        // Add analysis intent if available
+        if (record.analysis_intent) {
+            const intentDiv = document.createElement('div');
+            intentDiv.className = 'small mb-2';
+            
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-brain';
+            intentDiv.appendChild(icon);
+            
+            intentDiv.appendChild(document.createTextNode(' Intent: '));
+            
+            const strongIntent = document.createElement('strong');
+            strongIntent.textContent = record.analysis_intent; // Safe: textContent escapes HTML
+            intentDiv.appendChild(strongIntent);
+            
+            card.appendChild(intentDiv);
+        }
+        
+        // Create badges row
+        const badgesRow = document.createElement('div');
+        badgesRow.className = 'd-flex gap-2 flex-wrap';
+        
+        badgesRow.appendChild(createTranscriptionBadgeElement(record.transcription_status));
+        badgesRow.appendChild(createAnalysisBadgeElement(record.analysis_status));
+        
+        if (record.is_resolved) {
+            const resolvedBadge = document.createElement('span');
+            resolvedBadge.className = 'badge bg-success';
+            resolvedBadge.textContent = 'Resolved';
+            badgesRow.appendChild(resolvedBadge);
+        }
+        
+        card.appendChild(badgesRow);
+        container.appendChild(card);
     });
+}
+
+// Create priority badge as DOM element (XSS-safe)
+function createPriorityBadgeElement(priority) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
     
-    container.innerHTML = html;
+    const badgeConfig = {
+        'low': { class: 'bg-secondary', text: 'Low' },
+        'medium': { class: 'bg-info', text: 'Medium' },
+        'high': { class: 'bg-warning', text: 'High' },
+        'critical': { class: 'bg-danger', text: 'Critical' }
+    };
+    
+    const config = badgeConfig[priority] || { class: 'bg-secondary', text: 'Unknown' };
+    badge.classList.add(config.class);
+    badge.textContent = config.text;
+    
+    return badge;
+}
+
+// Create transcription status badge as DOM element (XSS-safe)
+function createTranscriptionBadgeElement(status) {
+    const badge = document.createElement('span');
+    badge.className = 'status-badge badge';
+    
+    const statusConfig = {
+        'pending': { class: 'bg-secondary', text: 'Transcribing...' },
+        'completed': { class: 'bg-success', text: 'Transcribed' },
+        'failed': { class: 'bg-danger', text: 'Failed' }
+    };
+    
+    const config = statusConfig[status] || { class: 'bg-secondary', text: 'Unknown' };
+    badge.classList.add(config.class);
+    badge.textContent = config.text;
+    
+    return badge;
+}
+
+// Create analysis status badge as DOM element (XSS-safe)
+function createAnalysisBadgeElement(status) {
+    const badge = document.createElement('span');
+    badge.className = 'status-badge badge';
+    
+    const statusConfig = {
+        'pending': { class: 'bg-secondary', text: 'Analyzing...' },
+        'processing': { class: 'bg-info', text: 'Processing...' },
+        'completed': { class: 'bg-success', text: 'Analyzed' },
+        'failed': { class: 'bg-danger', text: 'Failed' }
+    };
+    
+    const config = statusConfig[status] || { class: 'bg-secondary', text: 'Unknown' };
+    badge.classList.add(config.class);
+    badge.textContent = config.text;
+    
+    return badge;
 }
 
 // Display markers on map
@@ -114,9 +255,14 @@ function displayMarkersOnMap(records) {
             })
         });
         
+        // Build popup with escaped user data
+        const popupText = record.transcribed_text 
+            ? escapeHtml(record.transcribed_text.substring(0, 100)) + '...' 
+            : 'Transcribing...';
+        
         marker.bindPopup(`
-            <b>${record.device_id}</b><br>
-            ${record.transcribed_text ? record.transcribed_text.substring(0, 100) + '...' : 'Transcribing...'}
+            <b>${escapeHtml(record.device_id)}</b><br>
+            ${popupText}
             <br><button class="btn btn-sm btn-info mt-2" onclick="viewRecordDetail(${record.id})">View Detail</button>
         `);
         
@@ -146,10 +292,46 @@ async function viewRecordDetail(recordId) {
     }
 }
 
-// Show record detail in modal
+// Show record detail in modal (XSS-safe with escaped user data)
 function showRecordDetail(record) {
     const content = document.getElementById('voiceDetailContent');
     const recordDate = new Date(record.recorded_at).toLocaleString();
+    
+    // Build intent row if available
+    const intentRow = record.analysis_intent ? `
+        <tr>
+            <td>Intent:</td>
+            <td><strong>${escapeHtml(record.analysis_intent)}</strong></td>
+        </tr>
+    ` : '';
+    
+    // Build items row if available
+    const itemsRow = (record.analysis_items && record.analysis_items.length > 0) ? `
+        <tr>
+            <td>Items Needed:</td>
+            <td>${escapeHtml(record.analysis_items.join(', '))}</td>
+        </tr>
+    ` : '';
+    
+    // Build transcribed text section if available
+    const transcribedSection = record.transcribed_text ? `
+        <div class="mt-3">
+            <h6><i class="fas fa-comment-dots text-primary"></i> Transcribed Text</h6>
+            <div class="alert alert-info">
+                ${escapeHtml(record.transcribed_text)}
+            </div>
+        </div>
+    ` : '';
+    
+    // Build operator notes section if available
+    const notesSection = record.operator_notes ? `
+        <div class="mt-3">
+            <h6><i class="fas fa-sticky-note text-primary"></i> Operator Notes</h6>
+            <div class="alert alert-secondary">
+                ${escapeHtml(record.operator_notes)}
+            </div>
+        </div>
+    ` : '';
     
     content.innerHTML = `
         <div class="row">
@@ -158,11 +340,11 @@ function showRecordDetail(record) {
                 <table class="table table-sm table-dark">
                     <tr>
                         <td>Device ID:</td>
-                        <td><strong>${record.device_id}</strong></td>
+                        <td><strong>${escapeHtml(record.device_id)}</strong></td>
                     </tr>
                     <tr>
                         <td>Recorded:</td>
-                        <td>${recordDate}</td>
+                        <td>${escapeHtml(recordDate)}</td>
                     </tr>
                     <tr>
                         <td>Location:</td>
@@ -190,18 +372,8 @@ function showRecordDetail(record) {
                         <td>Analysis:</td>
                         <td>${getAnalysisBadge(record.analysis_status)}</td>
                     </tr>
-                    ${record.analysis_intent ? `
-                        <tr>
-                            <td>Intent:</td>
-                            <td><strong>${record.analysis_intent}</strong></td>
-                        </tr>
-                    ` : ''}
-                    ${record.analysis_items && record.analysis_items.length > 0 ? `
-                        <tr>
-                            <td>Items Needed:</td>
-                            <td>${record.analysis_items.join(', ')}</td>
-                        </tr>
-                    ` : ''}
+                    ${intentRow}
+                    ${itemsRow}
                 </table>
             </div>
         </div>
@@ -209,28 +381,13 @@ function showRecordDetail(record) {
         <div class="mt-3">
             <h6><i class="fas fa-volume-up text-primary"></i> Audio Recording</h6>
             <audio controls class="audio-player">
-                <source src="${record.audio_url}" type="audio/mpeg">
+                <source src="${(record.audio_url)}" type="audio/mpeg">
                 Your browser does not support the audio element.
             </audio>
         </div>
         
-        ${record.transcribed_text ? `
-            <div class="mt-3">
-                <h6><i class="fas fa-comment-dots text-primary"></i> Transcribed Text</h6>
-                <div class="alert alert-info">
-                    ${record.transcribed_text}
-                </div>
-            </div>
-        ` : ''}
-        
-        ${record.operator_notes ? `
-            <div class="mt-3">
-                <h6><i class="fas fa-sticky-note text-primary"></i> Operator Notes</h6>
-                <div class="alert alert-secondary">
-                    ${record.operator_notes}
-                </div>
-            </div>
-        ` : ''}
+        ${transcribedSection}
+        ${notesSection}
     `;
     
     // Setup buttons
@@ -241,27 +398,118 @@ function showRecordDetail(record) {
     modal.show();
 }
 
-// Resolve record
-async function resolveRecord(recordId) {
-    const notes = prompt('Add resolution notes (optional):');
+// Show resolve modal with form for notes
+function showResolveModal(recordId) {
+    // Remove any existing resolve modal to avoid duplicate IDs
+    const existingModal = document.getElementById('resolveModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
     
+    // Create modal HTML
+    const modalHTML = `
+        <div class="modal fade" id="resolveModal" tabindex="-1" aria-labelledby="resolveModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content bg-dark text-light">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="resolveModalLabel">
+                            <i class="fas fa-check-circle text-success"></i> Resolve Voice Record
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Mark this voice record as resolved. You can optionally add notes about the resolution.</p>
+                        <div class="mb-3">
+                            <label for="resolveNotes" class="form-label">Resolution Notes (Optional)</label>
+                            <textarea class="form-control" id="resolveNotes" rows="3" 
+                                      placeholder="e.g., Rescue team dispatched, supplies delivered, etc."></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-success" id="btnConfirmResolve">
+                            <i class="fas fa-check"></i> Resolve
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Inject modal into DOM
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    
+    const modalElement = document.getElementById('resolveModal');
+    const modal = new bootstrap.Modal(modalElement);
+    
+    // Wire up Resolve button
+    document.getElementById('btnConfirmResolve').onclick = async () => {
+        const notes = document.getElementById('resolveNotes').value.trim();
+        await submitResolveRecord(recordId, notes, modal, modalElement);
+    };
+    
+    // Clean up modal element when hidden
+    modalElement.addEventListener('hidden.bs.modal', () => {
+        modalElement.remove();
+    });
+    
+    modal.show();
+}
+
+// Submit resolve record request
+async function submitResolveRecord(recordId, notes, modal, modalElement) {
     try {
         const response = await fetch(`/api/voice/records/${recordId}`, {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({notes})
+            body: JSON.stringify({notes: notes || null})
         });
+        
+        // Check HTTP status before parsing JSON
+        if (!response.ok) {
+            const errorText = await response.text();
+            let errorMessage = `Server error: ${response.status}`;
+            try {
+                const errorData = JSON.parse(errorText);
+                errorMessage = errorData.message || errorMessage;
+            } catch (e) {
+                // If response is not JSON, use status text
+                errorMessage = `${response.status} ${response.statusText}`;
+            }
+            throw new Error(errorMessage);
+        }
         
         const data = await response.json();
         
         if (data.status === 'success') {
             showToast('Record marked as resolved', 'success');
-            bootstrap.Modal.getInstance(document.getElementById('voiceDetailModal')).hide();
+            
+            // Hide resolve modal
+            modal.hide();
+            
+            // Hide detail modal if it exists
+            const detailModalElement = document.getElementById('voiceDetailModal');
+            if (detailModalElement) {
+                const detailModalInstance = bootstrap.Modal.getInstance(detailModalElement);
+                if (detailModalInstance) {
+                    detailModalInstance.hide();
+                }
+            }
+            
+            // Reload records
             loadVoiceRecords();
+        } else {
+            throw new Error(data.message || 'Unknown error occurred');
         }
     } catch (error) {
-        showToast('Error resolving record', 'error');
+        console.error('Error resolving record:', error);
+        showToast(`Error resolving record: ${error.message}`, 'danger');
     }
+}
+
+// Resolve record (now delegates to modal)
+function resolveRecord(recordId) {
+    showResolveModal(recordId);
 }
 
 // Delete record

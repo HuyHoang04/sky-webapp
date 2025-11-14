@@ -5,6 +5,10 @@ import os
 import subprocess
 from time import sleep
 import time
+import signal
+import sys
+import atexit
+import fcntl
 import cloudinary
 import cloudinary.uploader
 import requests 
@@ -22,23 +26,59 @@ PULSE_SERVER = "/run/user/1000/pulse/native"
 MIC_DEVICE = "plughw:1,0"
 
 # Cloudinary
+CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME")
+CLOUD_KEY = os.environ.get("CLOUDINARY_API_KEY")
+CLOUD_SECRET = os.environ.get("CLOUDINARY_API_SECRET")
+if not CLOUD_NAME or not CLOUD_KEY or not CLOUD_SECRET:
+    raise ValueError("[CONFIG] CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET must be set in environment variables")
 cloudinary.config(
-  cloud_name = "dk3hfleib",
-  api_key = "476417423893251",
-  api_secret = "4oBdZ9bPANC5_Eg1pLWAnKyr3m8"
+  cloud_name = CLOUD_NAME,
+  api_key = CLOUD_KEY,
+  api_secret = CLOUD_SECRET
 )
 CLOUD_FOLDER = "help"
 
-# Web App API (receives voice + GPS, then triggers AI)
-WEB_APP_URL = "https://your-webapp-url.dev/api/voice/records"
-DEVICE_ID = "rescue_mic_01"  # Device identifier 
+WEB_APP_URL = os.environ.get("WEB_APP_URL")
+if not WEB_APP_URL:
+    WEB_APP_URL = "http://localhost:5000/api/voice/records"
+    print(f"[CONFIG]  WEB_APP_URL not set in environment, using default: {WEB_APP_URL}")
+    print("[CONFIG] Set WEB_APP_URL environment variable to configure the production endpoint")
+else:
+    print(f"[CONFIG] Using Web App URL: {WEB_APP_URL}")
+
+# Validate URL format
+if not WEB_APP_URL.startswith(("http://", "https://")):
+    raise ValueError(f"[CONFIG] Invalid WEB_APP_URL: '{WEB_APP_URL}' - Must start with http:// or https://")
+
+DEVICE_ID = os.environ.get("DEVICE_ID", "rescue_mic_01")  # Device identifier (configurable)
+print(f"[CONFIG] Device ID: {DEVICE_ID}")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
+def cleanup_resources():
+    """Clean up GPIO and other resources before exit"""
+    print("\n[CLEANUP] Cleaning up resources...")
+    try:
+        GPIO.cleanup()
+        print("[CLEANUP] GPIO cleaned up successfully")
+    except Exception as e:
+        print(f"[CLEANUP] Error cleaning GPIO: {e}")
+
+def signal_handler(signum, frame):
+    """Handle SIGINT (Ctrl+C) and SIGTERM signals"""
+    print(f"\n[SIGNAL] Received signal {signum}, shutting down gracefully...")
+    cleanup_resources()
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+signal.signal(signal.SIGTERM, signal_handler)  # kill command
+atexit.register(cleanup_resources)
 print("[SYSTEM] Initialized. Waiting for button press...")
+print("[SYSTEM] Press Ctrl+C to exit gracefully")
 
 def play_sound():
     subprocess.run(
@@ -49,19 +89,53 @@ def play_sound():
     )
 
 def get_next_filename():
-    if os.path.exists(COUNTER_FILE):
-        with open(COUNTER_FILE, "r") as f:
-            count = int(f.read().strip())
-    else:
-        count = 1
-
-    filename = os.path.join(SAVE_DIR, f"record_{count}.wav")
-    
-    # Cập nhật counter cho lần sau
-    with open(COUNTER_FILE, "w") as f:
-        f.write(str(count + 1))
-    
-    return filename
+    """
+    Atomically read and increment the counter file with exclusive file locking.
+    Prevents race conditions when multiple processes try to get filenames concurrently.
+    """
+    # Open counter file in read-write mode, create if doesn't exist
+    try:
+        # Use 'r+' if file exists, otherwise 'w+' to create
+        # Open in 'a+' mode (create if doesn't exist, read/write if exists)
+        f = open(COUNTER_FILE, "a+")        
+        try:
+            # Acquire exclusive lock (blocks until lock is available)
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            
+            # Read current counter value
+            f.seek(0)
+            content = f.read().strip()
+            
+            if content and content.isdigit():
+                count = int(content)
+            else:
+                count = 1  # Default to 1 if file is empty or invalid
+            
+            filename = os.path.join(SAVE_DIR, f"record_{count}.wav")
+            
+            # Write incremented counter atomically
+            f.seek(0)
+            f.truncate()
+            f.write(str(count + 1))
+            f.flush()  # Ensure data is written to disk
+            os.fsync(f.fileno())  # Force OS to write to disk
+            
+            # Lock is automatically released when file is closed
+            
+        finally:
+            # Release lock and close file
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            f.close()
+        
+        return filename
+        
+    except Exception as e:
+        print(f"[COUNTER] Error accessing counter file: {e}")
+        # Fallback to timestamp-based filename if counter fails
+        timestamp = int(time.time())
+        filename = os.path.join(SAVE_DIR, f"record_{timestamp}.wav")
+        print(f"[COUNTER] Using timestamp-based filename: {filename}")
+        return filename
 
 def record_audio():
     """Ghi âm 15 giây và tăng âm lượng trực tiếp"""
@@ -86,15 +160,50 @@ def record_audio():
 
     # Tăng âm lượng trực tiếp trên cùng file WAV
     tmp_file = wav_file + ".tmp.wav"
-    subprocess.run(
-        f"ffmpeg -y -i {wav_file} -filter:a 'volume={VOLUME_GAIN}' {tmp_file}",
-        shell=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    os.replace(tmp_file, wav_file)
-    print(f"[RECORD] recording finished and saved successfully: {wav_file}")
-    return wav_file
+    
+    try:
+        # Safe ffmpeg command without shell=True (prevents shell injection)
+        cmd_ffmpeg = [
+            "ffmpeg", "-y",
+            "-i", wav_file,
+            "-filter:a", f"volume={VOLUME_GAIN}",
+            tmp_file
+        ]
+        
+        result = subprocess.run(
+            cmd_ffmpeg,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=30
+        )
+        
+        # Check if ffmpeg succeeded
+        if result.returncode != 0:
+            error_msg = result.stderr.decode('utf-8', errors='ignore') if result.stderr else "Unknown error"
+            print(f"[RECORD] ffmpeg failed (exit code {result.returncode}): {error_msg}")
+            raise RuntimeError(f"ffmpeg volume adjustment failed: {error_msg}")
+        
+        # Only replace if tmp_file was created successfully
+        if not os.path.exists(tmp_file):
+            raise FileNotFoundError(f"ffmpeg did not create temporary file: {tmp_file}")
+        
+        os.replace(tmp_file, wav_file)
+        print(f"[RECORD] recording finished and saved successfully: {wav_file}")
+        return wav_file
+        
+    except subprocess.TimeoutExpired:
+        print(f"[RECORD] ffmpeg timeout after 30 seconds")
+        raise
+    except Exception as e:
+        print(f"[RECORD] Error during volume adjustment: {e}")
+        # Clean up temporary file if it exists
+        if os.path.exists(tmp_file):
+            try:
+                os.remove(tmp_file)
+                print(f"[RECORD] Cleaned up temporary file: {tmp_file}")
+            except Exception as cleanup_error:
+                print(f"[RECORD] Failed to clean up tmp file: {cleanup_error}")
+        raise
 
 def convert_to_mp3(wav_path):
     """Chuyển WAV sang MP3 và xóa file WAV"""
@@ -164,28 +273,37 @@ def upload_to_cloudinary(mp3_path):
         return None
 
 # ----------------- VÒNG LẶP CHÍNH -----------------
-while True:
-    if GPIO.input(BUTTON_PIN) == GPIO.LOW:  # Nhấn nút
-        print("[BUTTON] Button pressed — playing Help_me.wav then recording...")
+try:
+    while True:
+        if GPIO.input(BUTTON_PIN) == GPIO.LOW:  # Nhấn nút
+            print("[BUTTON] Button pressed — playing Help_me.wav then recording...")
 
-        # Phát âm thanh Help_me
-        play_sound()
+            # Phát âm thanh Help_me
+            play_sound()
 
-        # Ghi âm + tăng âm lượng
-        wav_file = record_audio()
+            # Ghi âm + tăng âm lượng
+            wav_file = record_audio()
 
-        # Chuyển sang MP3
-        mp3_file = convert_to_mp3(wav_file)
+            # Chuyển sang MP3
+            mp3_file = convert_to_mp3(wav_file)
 
-        # Upload lên Cloudinary và lấy URL
-        cloudinary_url = None
-        if mp3_file:
-            cloudinary_url = upload_to_cloudinary(mp3_file)
-            
-        # 🚀 Gửi URL + GPS tới Web App (Web App sẽ trigger AI service)
-        if cloudinary_url:
-            send_to_web_app(cloudinary_url)
+            # Upload lên Cloudinary và lấy URL
+            cloudinary_url = None
+            if mp3_file:
+                cloudinary_url = upload_to_cloudinary(mp3_file)
+                
+            # 🚀 Gửi URL + GPS tới Web App (Web App sẽ trigger AI service)
+            if cloudinary_url:
+                send_to_web_app(cloudinary_url)
 
-        print("[BUTTON] Returning to standby mode...\n")
-        sleep(1) 
-    sleep(0.05)
+            print("[BUTTON] Returning to standby mode...\n")
+            sleep(1) 
+        sleep(0.05)
+
+except KeyboardInterrupt:
+    print("\n[INTERRUPT] Keyboard interrupt detected")
+except Exception as e:
+    print(f"\n[ERROR] Unexpected error in main loop: {e}")
+finally:
+    cleanup_resources()
+    print("[SYSTEM] Script terminated")

@@ -5,7 +5,7 @@ Stores audio recordings with GPS location and AI analysis
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, JSON, Index
 from sqlalchemy.sql import func
 from database import Base
-from datetime import datetime
+from datetime import datetime, timezone
 
 class VoiceRecord(Base):
     """Model for voice distress records from rescue microphones"""
@@ -38,11 +38,11 @@ class VoiceRecord(Base):
     is_resolved = Column(Boolean, default=False)
     priority = Column(String(20), default='medium')  # low, medium, high, critical
     
-    # Timestamps
-    recorded_at = Column(DateTime, default=datetime.utcnow)
-    transcribed_at = Column(DateTime, nullable=True)
-    analyzed_at = Column(DateTime, nullable=True)
-    resolved_at = Column(DateTime, nullable=True)
+    # Timestamps (timezone-aware)
+    recorded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    transcribed_at = Column(DateTime(timezone=True), nullable=True)
+    analyzed_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
     
     # Notes from operators
     operator_notes = Column(Text, nullable=True)
