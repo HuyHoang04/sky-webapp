@@ -44,9 +44,18 @@ logger = logging.getLogger("drone-client")
 DEFAULT_SERVER_URL = "https://kanisha-unannexable-laraine.ngrok-free.dev"
 DEFAULT_DEVICE_ID = "drone-camera"  # Fixed device ID for easier debugging
 DEFAULT_DEVICE_NAME = "Drone Camera"
-DEFAULT_FPS = 30  # 30 fps for smooth real-time streaming
-DEFAULT_WIDTH = 1280  # 720p resolution
-DEFAULT_HEIGHT = 720
+
+# ========== VIDEO STREAMING CONFIGURATION (Có thể chỉnh tại đây) ==========
+DEFAULT_FPS = 30  # Frames per second (15-30 fps recommended)
+DEFAULT_WIDTH = 1280  # Video width in pixels
+DEFAULT_HEIGHT = 720  # Video height in pixels
+DEFAULT_BITRATE = 4000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
+                           # Lower = less bandwidth but lower quality
+                           # Higher = better quality but more bandwidth
+DEFAULT_DETECTION_INTERVAL = 15  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
+                                  # Higher = less CPU usage but slower detection updates
+# ===========================================================================
+
 DEFAULT_GPS_INTERVAL = 1.0  # seconds
 ICE_GATHERING_TIMEOUT = 5  # seconds
 RECONNECT_DELAY = 5  # seconds
@@ -126,24 +135,24 @@ async def create_peer_connection():
     if webcam:
         # Create a new video track or reuse existing one
         if not video_track:
-            video_track = ObjectDetectionStreamTrack(webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, ort_session)
+            video_track = ObjectDetectionStreamTrack(webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, ort_session, detection_interval=DEFAULT_DETECTION_INTERVAL)
         # Capture the sender so we can tune RTP encoding parameters (bitrate/framerate)
         try:
             sender = peer_connection.addTrack(video_track)
             logger.info("Added video track to peer connection")
 
-            # Configure RTP encoding for high-quality real-time streaming (720p@30fps, 4-6 Mbps)
+            # Configure RTP encoding using configurable parameters
             try:
                 params = sender.getParameters()
                 # Ensure encodings list exists
                 if not getattr(params, 'encodings', None):
-                    params.encodings = [{'maxBitrate': 6000000, 'maxFramerate': DEFAULT_FPS}]
+                    params.encodings = [{'maxBitrate': DEFAULT_BITRATE, 'maxFramerate': DEFAULT_FPS}]
                 else:
                     # Update the first encoding entry with desired constraints
                     try:
-                        params.encodings[0].update({'maxBitrate': 6000000, 'maxFramerate': DEFAULT_FPS})
+                        params.encodings[0].update({'maxBitrate': DEFAULT_BITRATE, 'maxFramerate': DEFAULT_FPS})
                     except Exception:
-                        params.encodings = [{'maxBitrate': 6000000, 'maxFramerate': DEFAULT_FPS}]
+                        params.encodings = [{'maxBitrate': DEFAULT_BITRATE, 'maxFramerate': DEFAULT_FPS}]
 
                 # setParameters may be synchronous or return an awaitable depending on aiortc version
                 try:
@@ -153,7 +162,7 @@ async def create_peer_connection():
                 except Exception as e:
                     logger.warning(f"Could not set RTP sender parameters: {e}")
                 else:
-                    logger.info(f"RTP encoding set: 720p@{DEFAULT_FPS}fps, bitrate=6Mbps (real-time optimized)")
+                    logger.info(f"RTP encoding set: {DEFAULT_WIDTH}x{DEFAULT_HEIGHT}@{DEFAULT_FPS}fps, bitrate={DEFAULT_BITRATE/1000000:.1f}Mbps")
             except Exception as e:
                 logger.debug(f"Skipping sender parameter tuning: {e}")
         except Exception as e:
