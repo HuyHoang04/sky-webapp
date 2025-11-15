@@ -27,14 +27,6 @@ def get_stream(device_id):
     logger.warning(f"[VIDEO API] Stream not found for device: {device_id}")
     return jsonify({'error': 'Stream not found'}), 404
 
-@video_blueprint.route('/webrtc/<device_id>', methods=['GET'])
-def webrtc_view(device_id):
-    """
-    Trang xem video WebRTC cho một thiết bị cụ thể
-    """
-    logger.info(f"[VIDEO] Rendering WebRTC view for device: {device_id}")
-    return render_template('webrtc.html', device_id=device_id)
-
 @socketio.on('webrtc_offer')
 def handle_webrtc_offer(data):
     """

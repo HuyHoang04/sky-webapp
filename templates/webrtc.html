@@ -67,6 +67,38 @@
                 </div>
             </div>
             
+            <!-- Detection Stats Card -->
+            <div class="card bg-dark text-light border-secondary mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-users me-2"></i>Thống kê phát hiện</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-4">
+                            <div class="p-3 border border-success rounded">
+                                <i class="fas fa-male fa-2x text-success mb-2"></i>
+                                <h6>Người trên đất</h6>
+                                <h3 class="text-success" id="earthPersonCount">0</h3>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="p-3 border border-warning rounded">
+                                <i class="fas fa-swimmer fa-2x text-warning mb-2"></i>
+                                <h6>Người trên biển</h6>
+                                <h3 class="text-warning" id="seaPersonCount">0</h3>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="p-3 border border-info rounded">
+                                <i class="fas fa-users fa-2x text-info mb-2"></i>
+                                <h6>Tổng số người</h6>
+                                <h3 class="text-info" id="totalPersonCount">0</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
             <div class="card bg-dark text-light border-secondary mt-4">
                 <div class="card-header">
                     <h5 class="mb-0">Thông tin thiết bị</h5>
@@ -248,6 +280,16 @@
     // Tự động bắt đầu stream khi trang được tải
     window.addEventListener('load', function() {
         startWebRTC();
+    });
+    
+    // Listen for detection updates via Socket.IO
+    socket.on('detection_update', function(data) {
+        if (data.device_id === deviceId) {
+            // Update person counts
+            document.getElementById('earthPersonCount').textContent = data.earth_person_count || 0;
+            document.getElementById('seaPersonCount').textContent = data.sea_person_count || 0;
+            document.getElementById('totalPersonCount').textContent = data.person_count || 0;
+        }
     });
 </script>
 {% endblock %}

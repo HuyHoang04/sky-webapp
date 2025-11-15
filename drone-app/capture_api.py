@@ -7,11 +7,12 @@ import numpy as np
 logger = logging.getLogger("drone-client")
 
 
-async def start_capture_server(webcam, ort_session=None, host='0.0.0.0', port=8080):
+async def start_capture_server(webcam, ort_session=None, host='0.0.0.0', port=8080, get_latest_gps=None, cloud_url=None, device_id='drone-camera'):
     """Start a simple HTTP server that serves /capture endpoint.
 
     Query params:
       - detect=true|1 : run ONNX detection before returning image (overlay only)
+      - quality=0-100 : JPEG quality (default 95 for high quality)
 
     This function runs until cancelled. Call with asyncio.create_task(...).
     """
@@ -20,6 +21,7 @@ async def start_capture_server(webcam, ort_session=None, host='0.0.0.0', port=80
 
     async def handle_capture(request):
         detect = request.query.get('detect', 'false').lower() in ('1', 'true', 'yes')
+        quality = int(request.query.get('quality', '95'))  # High quality by default
         camera = webcam
         frame = None
 
@@ -54,9 +56,10 @@ async def start_capture_server(webcam, ort_session=None, host='0.0.0.0', port=80
             except Exception as e:
                 logger.error(f"ONNX detection error: {e}")
 
-        # Encode as JPEG
+        # Encode as high-quality JPEG
         try:
-            ret, jpg = cv2.imencode('.jpg', frame)
+            encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+            ret, jpg = cv2.imencode('.jpg', frame, encode_params)
             if not ret:
                 raise RuntimeError('JPEG encode failed')
             return web.Response(body=jpg.tobytes(), content_type='image/jpeg')

@@ -40,13 +40,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("drone-client")
 
-# Default configuration
+# Default configuration - Optimized for real-time streaming
 DEFAULT_SERVER_URL = "https://kanisha-unannexable-laraine.ngrok-free.dev"
 DEFAULT_DEVICE_ID = "drone-camera"  # Fixed device ID for easier debugging
 DEFAULT_DEVICE_NAME = "Drone Camera"
-DEFAULT_FPS = 15
-DEFAULT_WIDTH = 640
-DEFAULT_HEIGHT = 480
+DEFAULT_FPS = 30  # 30 fps for smooth real-time streaming
+DEFAULT_WIDTH = 1280  # 720p resolution
+DEFAULT_HEIGHT = 720
 DEFAULT_GPS_INTERVAL = 1.0  # seconds
 ICE_GATHERING_TIMEOUT = 5  # seconds
 RECONNECT_DELAY = 5  # seconds
@@ -70,6 +70,9 @@ video_track = None
 capture_server_task = None
 pending_remote_ice = []
 user_stopped = False
+detection_task = None
+latest_gps = None
+DEFAULT_DETECTION_INTERVAL = 5.0  # seconds between detection publishes
 
 
 async def create_peer_connection():
@@ -129,18 +132,18 @@ async def create_peer_connection():
             sender = peer_connection.addTrack(video_track)
             logger.info("Added video track to peer connection")
 
-            # Attempt to set sender encoding parameters to be similar to libcamera-hello behavior
+            # Configure RTP encoding for high-quality real-time streaming (720p@30fps, 4-6 Mbps)
             try:
                 params = sender.getParameters()
                 # Ensure encodings list exists
                 if not getattr(params, 'encodings', None):
-                    params.encodings = [{'maxBitrate': 800000, 'maxFramerate': DEFAULT_FPS}]
+                    params.encodings = [{'maxBitrate': 6000000, 'maxFramerate': DEFAULT_FPS}]
                 else:
                     # Update the first encoding entry with desired constraints
                     try:
-                        params.encodings[0].update({'maxBitrate': 800000, 'maxFramerate': DEFAULT_FPS})
+                        params.encodings[0].update({'maxBitrate': 6000000, 'maxFramerate': DEFAULT_FPS})
                     except Exception:
-                        params.encodings = [{'maxBitrate': 800000, 'maxFramerate': DEFAULT_FPS}]
+                        params.encodings = [{'maxBitrate': 6000000, 'maxFramerate': DEFAULT_FPS}]
 
                 # setParameters may be synchronous or return an awaitable depending on aiortc version
                 try:
@@ -150,7 +153,7 @@ async def create_peer_connection():
                 except Exception as e:
                     logger.warning(f"Could not set RTP sender parameters: {e}")
                 else:
-                    logger.info("RTP sender parameters set (bitrate/framerate)")
+                    logger.info(f"RTP encoding set: 720p@{DEFAULT_FPS}fps, bitrate=6Mbps (real-time optimized)")
             except Exception as e:
                 logger.debug(f"Skipping sender parameter tuning: {e}")
         except Exception as e:
@@ -214,6 +217,195 @@ async def restart_webrtc():
         logger.error(f"Failed to restart WebRTC: {e}")
 
 
+def _nms_boxes(boxes, scores, iou_threshold=0.5):
+    """Simple NMS for boxes in [x1,y1,x2,y2] format."""
+    if len(boxes) == 0:
+        return []
+    boxes = np.array(boxes)
+    scores = np.array(scores)
+    x1 = boxes[:, 0]
+    y1 = boxes[:, 1]
+    x2 = boxes[:, 2]
+    y2 = boxes[:, 3]
+    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
+    order = scores.argsort()[::-1]
+    keep = []
+    while order.size > 0:
+        i = order[0]
+        keep.append(i)
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+        w = np.maximum(0.0, xx2 - xx1 + 1)
+        h = np.maximum(0.0, yy2 - yy1 + 1)
+        inter = w * h
+        ovr = inter / (areas[i] + areas[order[1:]] - inter)
+        inds = np.where(ovr <= iou_threshold)[0]
+        order = order[inds + 1]
+    return keep
+
+
+def parse_onnx_detections(outputs, input_size=(640, 640), orig_size=None, conf_threshold=0.25, iou_threshold=0.45):
+    """Heuristic parser for common YOLO-like ONNX outputs.
+    Returns list of detections: {'bbox':[x1,y1,x2,y2],'score':float,'class':int}
+    """
+    dets = []
+    for out in outputs:
+        if not isinstance(out, np.ndarray):
+            continue
+        if out.size == 0:
+            continue
+        arr = out
+        if arr.ndim == 3 and arr.shape[0] == 1:
+            arr = arr[0]
+        if arr.ndim != 2:
+            try:
+                arr = arr.reshape(-1, arr.shape[-1])
+            except Exception:
+                continue
+
+        C = arr.shape[1]
+        if C >= 6:
+            sample = arr[0]
+            is_norm = float(sample[0]) <= 1.01 and float(sample[1]) <= 1.01
+            for row in arr:
+                try:
+                    row = row.astype(float)
+                except Exception:
+                    continue
+                if C >= 6:
+                    cx, cy, w, h = row[0], row[1], row[2], row[3]
+                    conf = float(row[4])
+                    cls = int(row[5]) if C >= 6 else 0
+                    if conf < conf_threshold:
+                        continue
+                    if is_norm:
+                        iw, ih = input_size
+                        cx *= iw
+                        cy *= ih
+                        w *= iw
+                        h *= ih
+                    x1 = cx - w / 2.0
+                    y1 = cy - h / 2.0
+                    x2 = cx + w / 2.0
+                    y2 = cy + h / 2.0
+                    dets.append({'bbox': [float(x1), float(y1), float(x2), float(y2)], 'score': float(conf), 'class': int(cls)})
+        elif C == 5:
+            for row in arr:
+                try:
+                    x1, y1, x2, y2, conf = row.astype(float)
+                except Exception:
+                    continue
+                if conf < conf_threshold:
+                    continue
+                dets.append({'bbox': [float(x1), float(y1), float(x2), float(y2)], 'score': float(conf), 'class': 0})
+        else:
+            if C > 6:
+                for row in arr:
+                    try:
+                        row = row.astype(float)
+                    except Exception:
+                        continue
+                    cx, cy, w, h, conf = row[0], row[1], row[2], row[3], row[4]
+                    class_probs = row[5:]
+                    cls = int(np.argmax(class_probs))
+                    cls_prob = float(np.max(class_probs))
+                    score = conf * cls_prob
+                    if score < conf_threshold:
+                        continue
+                    iw, ih = input_size
+                    if cx <= 1.01 and cy <= 1.01:
+                        cx *= iw
+                        cy *= ih
+                        w *= iw
+                        h *= ih
+                    x1 = cx - w / 2.0
+                    y1 = cy - h / 2.0
+                    x2 = cx + w / 2.0
+                    y2 = cy + h / 2.0
+                    dets.append({'bbox': [float(x1), float(y1), float(x2), float(y2)], 'score': float(score), 'class': int(cls)})
+
+    if orig_size is not None and dets:
+        iw, ih = input_size
+        ow, oh = orig_size
+        sx = ow / float(iw)
+        sy = oh / float(ih)
+        for d in dets:
+            x1, y1, x2, y2 = d['bbox']
+            d['bbox'] = [x1 * sx, y1 * sy, x2 * sx, y2 * sy]
+
+    final = []
+    if dets:
+        boxes = [d['bbox'] for d in dets]
+        scores = [d['score'] for d in dets]
+        keep_idxs = _nms_boxes(boxes, scores, iou_threshold=iou_threshold)
+        for i in keep_idxs:
+            final.append(dets[i])
+
+    return final
+
+
+async def detection_publisher_loop(sio_client, webcam, ort_session, interval=DEFAULT_DETECTION_INTERVAL):
+    """Background task: periodically run detection on a frame and emit to server via Socket.IO"""
+    logger.info("Starting detection publisher loop")
+    try:
+        while True:
+            try:
+                if not sio_client.connected:
+                    await asyncio.sleep(1.0)
+                    continue
+
+                frame = None
+                if hasattr(webcam, 'get_frame'):
+                    frame = webcam.get_frame()
+                elif hasattr(webcam, 'capture_array'):
+                    frame = webcam.capture_array()
+
+                detections = []
+                if ort_session is not None and frame is not None:
+                    try:
+                        input_size = (640, 640)
+                        img = cv2.resize(frame, input_size)
+                        img_in = img.astype('float32') / 255.0
+                        img_in = np.transpose(img_in, (2, 0, 1))[None, :]
+                        outputs = ort_session.run(None, {ort_session.get_inputs()[0].name: img_in})
+                        
+                        h, w = frame.shape[:2]
+                        detections = parse_onnx_detections(outputs, input_size=(640, 640), orig_size=(w, h))
+                    except Exception as e:
+                        logger.debug(f"Detection inference error: {e}")
+                
+                # Count by class (0: earth_person, 1: sea_person)
+                earth_person_count = sum(1 for d in detections if d['class'] == 0)
+                sea_person_count = sum(1 for d in detections if d['class'] == 1)
+                total_person_count = earth_person_count + sea_person_count
+
+                payload = {
+                    'device_id': device_id,
+                    'timestamp': datetime.utcnow().isoformat() + 'Z',
+                    'earth_person_count': earth_person_count,
+                    'sea_person_count': sea_person_count,
+                    'person_count': total_person_count,
+                    'detections': [{'bbox': d['bbox'], 'class': d['class'], 'score': d['score']} for d in detections[:20]],
+                    'gps': latest_gps,
+                }
+                try:
+                    await sio_client.emit('detection_result', payload)
+                    logger.debug(f"Emitted detection_result: earth={earth_person_count}, sea={sea_person_count}")
+                except Exception as e:
+                    logger.debug(f"Failed to emit detection_result: {e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in detection publisher loop: {e}")
+
+            await asyncio.sleep(interval)
+    finally:
+        logger.info('Detection publisher loop stopped')
+
+
 @sio.event
 async def connect():
     """Handle Socket.IO connection"""
@@ -246,12 +438,37 @@ async def connect():
         logger.error(f"Failed to create WebRTC offer: {e}")
     
     
-    # Start real GPS task
-    global gps_task_runner, running
+    # Start real GPS task with latest_gps update
+    global gps_task_runner, running, latest_gps, detection_task
     if gps_task_runner and not gps_task_runner.done():
-        gps_task.cancel()
-    gps_task_runner = asyncio.create_task(gps_task(sio, device_id, device_name, serial_port="/dev/ttyAMA0", baudrate=9600, gps_interval=DEFAULT_GPS_INTERVAL))
-    logger.info("Started real GPS task from module gps_utils")
+        gps_task_runner.cancel()
+
+    async def _gps_reader():
+        """Read GPS from gps_utils.read_gps and update latest_gps while forwarding to server."""
+        global latest_gps
+        try:
+            async for gps in read_gps(serial_port="/dev/ttyAMA0", baudrate=9600):
+                latest_gps = gps
+                gps['device_id'] = device_id
+                gps['device_name'] = device_name
+                try:
+                    await sio.emit('gps_data', gps)
+                except Exception:
+                    pass
+                await asyncio.sleep(DEFAULT_GPS_INTERVAL)
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.warning(f"GPS reader error: {e}")
+
+    gps_task_runner = asyncio.create_task(_gps_reader())
+    logger.info("Started GPS reader task")
+    
+    # Start detection publisher
+    if detection_task and not detection_task.done():
+        detection_task.cancel()
+    detection_task = asyncio.create_task(detection_publisher_loop(sio, webcam, ort_session))
+    logger.info("Started detection publisher task")
     
 
 
@@ -330,15 +547,16 @@ async def webrtc_answer(data):
                 logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
-                            # Normalize buffered candidate into RTCIceCandidate if it's a dict
+                            # Convert buffered candidate dict to RTCIceCandidate
                             if isinstance(cand, dict):
                                 rtc_cand = RTCIceCandidate(
-                                    candidate=cand.get('candidate'),
+                                    candidate=cand.get('candidate'),  # The ICE candidate string
                                     sdpMid=cand.get('sdpMid'),
                                     sdpMLineIndex=cand.get('sdpMLineIndex')
                                 )
                                 await peer_connection.addIceCandidate(rtc_cand)
                             else:
+                                # If it's already an RTCIceCandidate object, add it directly
                                 await peer_connection.addIceCandidate(cand)
                         except Exception as e:
                             logger.error(f"Failed to add buffered ICE candidate: {e}")
@@ -366,47 +584,35 @@ async def webrtc_ice_candidate(data):
             logger.debug('webrtc_ice_candidate called with no candidate payload')
             return
 
-        # Normalize payload: build a plain dict with expected keys (RTCIceCandidateInit-like)
-        if isinstance(candidate_payload, dict) and 'candidate' in candidate_payload:
-            candidate_init = {
-                'candidate': candidate_payload.get('candidate'),
-                'sdpMid': candidate_payload.get('sdpMid'),
-                'sdpMLineIndex': candidate_payload.get('sdpMLineIndex')
-            }
-        elif isinstance(candidate_payload, str):
-            candidate_init = {'candidate': candidate_payload}
-        else:
-            candidate_init = candidate_payload
-
-        # Candidate_init should be a dict suitable for aiortc.addIceCandidate
-        candidate_obj = candidate_init
-
-        # Debug log the incoming candidate payload shape
+        # Debug log the incoming candidate payload
         logger.debug(f"Incoming ICE candidate payload: {candidate_payload}")
 
-        # If peer connection or its remote description is not ready yet, buffer the candidate dict
+        # If peer connection or its remote description is not ready yet, buffer the candidate
         if not peer_connection or getattr(peer_connection, 'remoteDescription', None) is None:
             logger.debug('PeerConnection or remoteDescription not ready, buffering ICE candidate')
-            pending_remote_ice.append(candidate_obj)
+            pending_remote_ice.append(candidate_payload)
             return
 
         try:
-            # Convert dict to RTCIceCandidate if needed, because aiortc expects an object with attributes
-            if isinstance(candidate_obj, dict):
+            # aiortc's addIceCandidate expects an RTCIceCandidate object
+            # RTCIceCandidate constructor takes: candidate, sdpMid, sdpMLineIndex
+            if isinstance(candidate_payload, dict):
                 rtc_cand = RTCIceCandidate(
-                    candidate=candidate_obj.get('candidate'),
-                    sdpMid=candidate_obj.get('sdpMid'),
-                    sdpMLineIndex=candidate_obj.get('sdpMLineIndex')
+                    candidate=candidate_payload.get('candidate'),  # The ICE candidate string
+                    sdpMid=candidate_payload.get('sdpMid'),
+                    sdpMLineIndex=candidate_payload.get('sdpMLineIndex')
                 )
                 await peer_connection.addIceCandidate(rtc_cand)
+                logger.debug('Added remote ICE candidate')
             else:
-                await peer_connection.addIceCandidate(candidate_obj)
-            logger.debug('Added remote ICE candidate')
+                # If it's already an RTCIceCandidate object, add it directly
+                await peer_connection.addIceCandidate(candidate_payload)
+                logger.debug('Added remote ICE candidate (direct)')
         except Exception as e:
             logger.error(f'Failed to add ICE candidate immediately: {e}. Buffering candidate.')
-            pending_remote_ice.append(candidate_obj)
+            pending_remote_ice.append(candidate_payload)
     except Exception as e:
-        logger.error(f"Error adding ICE candidate: {e}")
+        logger.error(f"Error handling ICE candidate: {e}")
 
 
 async def health_check():
@@ -459,11 +665,19 @@ async def cleanup():
         webcam = None
 
     # Stop capture API server if running
-    global capture_server_task
+    global capture_server_task, detection_task
     if capture_server_task and not capture_server_task.done():
         capture_server_task.cancel()
         try:
             await capture_server_task
+        except Exception:
+            pass
+    
+    # Stop detection task
+    if detection_task and not detection_task.done():
+        detection_task.cancel()
+        try:
+            await detection_task
         except Exception:
             pass
     
@@ -485,7 +699,7 @@ async def main():
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH, help="Video width")
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help="Video height")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS, help="Video FPS")
-    parser.add_argument("--model", default="model_fp32.onnx", help="Path to ONNX model")
+    parser.add_argument("--model", default="model_int8.onnx", help="Path to ONNX model")
     parser.add_argument("--no-detection", action="store_true", help="Disable object detection")
 
     args = parser.parse_args()
