@@ -25,7 +25,9 @@ def shutdown_ai_executor():
     Called during application shutdown to wait for in-flight tasks
     """
     logger.info("[VOICE SERVICE] Shutting down AI analysis executor...")
-    _ai_analysis_executor.shutdown(wait=True, timeout=60)
+    # Note: timeout parameter only available in Python 3.12+
+    # For Python 3.10, we just wait indefinitely for tasks to complete
+    _ai_analysis_executor.shutdown(wait=True)
     logger.info("[VOICE SERVICE] AI analysis executor shutdown complete")
 
 # Register shutdown handler

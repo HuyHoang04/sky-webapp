@@ -35,9 +35,11 @@ app.config['DEBUG'] = os.getenv('FLASK_ENV', 'production') == 'development'
 socketio.init_app(app, cors_allowed_origins="*")
 
 # Initialize database
-logger.info("=" * 60)
-logger.info("SkyAid Drone WebApp Starting...")
-logger.info("=" * 60)
+# Only log startup banner once (skip on Flask reloader parent process in debug mode)
+if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.config['DEBUG']:
+    logger.info("=" * 60)
+    logger.info("SkyAid Drone WebApp Starting...")
+    logger.info("=" * 60)
 
 db_initialized = False
 try:
@@ -61,7 +63,8 @@ except Exception as e:
         logger.warning("⚠ Application will start but database features will not work")
 
 # Register blueprints
-logger.info("Registering blueprints...")
+if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.config['DEBUG']:
+    logger.info("Registering blueprints...")
 
 # Register main blueprint first
 app.register_blueprint(main_blueprint)
@@ -79,8 +82,9 @@ app.register_blueprint(mission_blueprint)
 app.register_blueprint(detection_blueprint)
 app.register_blueprint(voice_blueprint)
 
-logger.info("✓ All blueprints registered")
-logger.info("=" * 60)
+if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.config['DEBUG']:
+    logger.info("✓ All blueprints registered")
+    logger.info("=" * 60)
 
 # Health check endpoint
 @app.route('/health')
@@ -94,9 +98,7 @@ def health_check():
     }
 
 if __name__ == '__main__':
-    logger.info(f"Starting server on http://0.0.0.0:5000")
     logger.info(f"Debug mode: {app.config['DEBUG']}")
-    logger.info("=" * 60)
     
     socketio.run(
         app, 
