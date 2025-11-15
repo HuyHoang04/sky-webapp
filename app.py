@@ -71,11 +71,13 @@ from controller.video_controller import video_blueprint
 from controller.gps_controller import gps_blueprint
 from controller.mission_controller import mission_blueprint
 from controller.detection_controller import detection_blueprint
+from controller.voice_controller import voice_blueprint
 
 app.register_blueprint(video_blueprint)
 app.register_blueprint(gps_blueprint)
 app.register_blueprint(mission_blueprint)
 app.register_blueprint(detection_blueprint)
+app.register_blueprint(voice_blueprint)
 
 logger.info("✓ All blueprints registered")
 logger.info("=" * 60)

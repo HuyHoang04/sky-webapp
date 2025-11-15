@@ -1,0 +1,42 @@
+/* Voice Records Page Styles */
+
+#voice-map {
+    height: 600px;
+    border-radius: 8px;
+}
+
+.voice-sidebar {
+    height: 600px;
+    overflow-y: auto;
+}
+
+.voice-card {
+    border-left: 4px solid transparent;
+    transition: all 0.3s ease;
+    margin-bottom: 1rem;
+}
+
+.voice-card:hover {
+    border-left-color: #ff4d4f;
+    background: rgba(255, 77, 79, 0.1);
+}
+
+.voice-urgent {
+    border-left-color: #ff4d4f;
+    background: rgba(255, 77, 79, 0.1);
+}
+
+.voice-resolved {
+    border-left-color: #52c41a;
+    opacity: 0.7;
+}
+
+.status-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+}
+
+.audio-player {
+    width: 100%;
+    margin: 0.5rem 0;
+}

@@ -7,7 +7,7 @@ from time import sleep
 import time
 import cloudinary
 import cloudinary.uploader
-import requests # 👈 THÊM: Thư viện để gửi yêu cầu HTTP
+import requests 
 
 # ----------------- CẤU HÌNH -----------------
 BUTTON_PIN = 17
@@ -29,27 +29,18 @@ cloudinary.config(
 )
 CLOUD_FOLDER = "help"
 
-# 🚀 CẤU HÌNH AI SERVICE MỚI
-# Thay thế IP và Port bằng địa chỉ thực tế của server đang chạy FastAPI
-AI_SERVICE_URL = "https://vincent-subporphyritic-nonextrinsically.ngrok-free.dev/analyze_from_url/" 
-# Ví dụ: "http://192.168.1.100:8000/analyze_from_url/"
-# --------------------------------------------
+# Web App API (receives voice + GPS, then triggers AI)
+WEB_APP_URL = "https://your-webapp-url.dev/api/voice/records"
+DEVICE_ID = "rescue_mic_01"  # Device identifier 
 
-# Tạo thư mục lưu file nếu chưa có
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-# Thiết lập GPIO polling với pull-up
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-print("Hệ thống sẵn sàng — nhấn nút để phát Help_me.wav rồi ghi âm...")
-
-# ----------------- HÀM -----------------
-# ... (Các hàm play_sound, get_next_filename, record_audio, convert_to_mp3 không đổi)
-# ...
+print("[SYSTEM] Initialized. Waiting for button press...")
 
 def play_sound():
-    """Phát Help_me.wav qua PulseAudio"""
     subprocess.run(
         ["ffplay", "-nodisp", "-autoexit", HELP_SOUND],
         env={"PULSE_SERVER": PULSE_SERVER},
@@ -58,7 +49,6 @@ def play_sound():
     )
 
 def get_next_filename():
-    """Tạo file WAV theo số thứ tự 1,2,3,..."""
     if os.path.exists(COUNTER_FILE):
         with open(COUNTER_FILE, "r") as f:
             count = int(f.read().strip())
@@ -76,9 +66,8 @@ def get_next_filename():
 def record_audio():
     """Ghi âm 15 giây và tăng âm lượng trực tiếp"""
     wav_file = get_next_filename()
-    print(f"Bắt đầu ghi âm {RECORD_SECONDS}s... → {wav_file}")
+    print(f"[RECORD] recording started for {RECORD_SECONDS}s... → {wav_file}")
 
-    # Đệm tránh tiếng xẹt đầu
     time.sleep(0.5)
 
     cmd_record = [
@@ -104,13 +93,13 @@ def record_audio():
         stderr=subprocess.DEVNULL
     )
     os.replace(tmp_file, wav_file)
-    print(f"Đã lưu file tăng âm: {wav_file}")
+    print(f"[RECORD] recording finished and saved successfully: {wav_file}")
     return wav_file
 
 def convert_to_mp3(wav_path):
     """Chuyển WAV sang MP3 và xóa file WAV"""
     if not os.path.exists(wav_path):
-        print("Không tạo được file WAV, bỏ qua chuyển MP3.")
+        print("[CONVERT] WAV file not found, skipping MP3 conversion.")
         return None
 
     mp3_path = wav_path.replace(".wav", ".mp3")
@@ -123,56 +112,61 @@ def convert_to_mp3(wav_path):
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     os.remove(wav_path)
-    print(f"Đã lưu file MP3: {mp3_path}")
+    print(f"[CONVERT] MP3 file saved: {mp3_path}")
     return mp3_path
 
-def send_to_ai_service(url):
-    """Gửi URL Cloudinary tới AI Service để phân tích"""
-    print(f"Gửi URL tới AI Service: {AI_SERVICE_URL}")
-    payload = {"audio_url": url}
+def send_to_web_app(audio_url):
+    """Send audio URL to Web App (Web App will add GPS from drone stream)"""
+    print(f"[API] Sending to Web App: {WEB_APP_URL}")
+    
+    payload = {
+        "device_id": DEVICE_ID,
+        "audio_url": audio_url,
+        "duration": RECORD_SECONDS
+    }
+    
     try:
-        # Sử dụng timeout 120s (2 phút) vì mô hình LLM có thể chậm
-        response = requests.post(AI_SERVICE_URL, json=payload, timeout=120) 
-        response.raise_for_status() # Raise exception cho 4xx hoặc 5xx lỗi
+        response = requests.post(WEB_APP_URL, json=payload, timeout=30)
+        response.raise_for_status()
         data = response.json()
-        print("✅ Phân tích AI thành công:")
+        print("[API] Response from Web App:")
         print(json.dumps(data, indent=2, ensure_ascii=False))
         return True
     except requests.exceptions.RequestException as e:
-        print(f" Gửi yêu cầu tới AI Service thất bại: {e}")
+        print(f"[API] Failed to send to Web App: {e}")
         return False
     except json.JSONDecodeError:
-        print(f"Phản hồi từ AI Service không phải JSON: {response.text}")
+        print(f"[API] Response is not valid JSON: {response.text}")
         return False
 
 def upload_to_cloudinary(mp3_path):
     """Upload file MP3 lên Cloudinary và xóa sau khi upload thành công"""
     if not os.path.exists(mp3_path):
-        print("File MP3 không tồn tại, bỏ qua upload.")
+        print("[UPLOAD] MP3 file not found, skipping upload.")
         return None # Trả về None nếu không thành công
 
     try:
-        print(f"Uploading {mp3_path} ...")
+        print(f"[UPLOAD] Uploading {mp3_path} ...")
         response = cloudinary.uploader.upload(
             mp3_path,
             resource_type="auto",
             folder=CLOUD_FOLDER
         )
         secure_url = response.get("secure_url")
-        print("Uploaded successfully:", secure_url)
+        print("[UPLOAD] Uploaded successfully:", secure_url)
 
         # Xóa file sau khi upload thành công
         os.remove(mp3_path)
-        print(f"File MP3 đã bị xóa: {mp3_path}")
+        print(f"[UPLOAD] MP3 file deleted: {mp3_path}")
         return secure_url # Trả về URL thành công
     except Exception as e:
-        print("Upload thất bại:", e)
+        print(f"[UPLOAD] Upload failed: {e}")
         return None
 
 # ----------------- VÒNG LẶP CHÍNH -----------------
 while True:
     if GPIO.input(BUTTON_PIN) == GPIO.LOW:  # Nhấn nút
-        print("Nút được nhấn — phát Help_me.wav rồi ghi âm...")
+        print("[BUTTON] Button pressed — playing Help_me.wav then recording...")
 
         # Phát âm thanh Help_me
         play_sound()
@@ -188,10 +182,10 @@ while True:
         if mp3_file:
             cloudinary_url = upload_to_cloudinary(mp3_file)
             
-        # 🚀 Gửi URL tới AI Service nếu upload thành công
+        # 🚀 Gửi URL + GPS tới Web App (Web App sẽ trigger AI service)
         if cloudinary_url:
-            send_to_ai_service(cloudinary_url)
+            send_to_web_app(cloudinary_url)
 
-        print("Quay lại chế độ chờ...\n")
-        sleep(1)  # chống dội nút
+        print("[BUTTON] Returning to standby mode...\n")
+        sleep(1) 
     sleep(0.05)
