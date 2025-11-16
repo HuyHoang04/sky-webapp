@@ -153,60 +153,43 @@ def record_audio():
         "-f", "S16_LE",
         "-r", str(SAMPLE_RATE),
         "-c", "1",
+        "-d", str(RECORD_SECONDS),  # Duration in seconds (proper way to record fixed length)
         wav_file
     ]
 
     try:
-        subprocess.run(cmd_record, timeout=RECORD_SECONDS)
-    except subprocess.TimeoutExpired:
-        pass
+        # No timeout needed since -d parameter handles recording duration
+        result = subprocess.run(cmd_record, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"[RECORD] arecord error: {result.stderr}")
+            raise RuntimeError(f"arecord failed with exit code {result.returncode}")
+    except Exception as e:
+        print(f"[RECORD] Recording failed: {e}")
+        raise
 
-    # Tăng âm lượng trực tiếp trên cùng file WAV
+    # Tăng âm lượng trực tiếp trên cùng file WAV (same as old code)
     tmp_file = wav_file + ".tmp.wav"
     
-    try:
-        # Safe ffmpeg command without shell=True (prevents shell injection)
-        cmd_ffmpeg = [
-            "ffmpeg", "-y",
-            "-i", wav_file,
-            "-filter:a", f"volume={VOLUME_GAIN}",
-            tmp_file
-        ]
-        
-        result = subprocess.run(
-            cmd_ffmpeg,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            timeout=30
-        )
-        
-        # Check if ffmpeg succeeded
-        if result.returncode != 0:
-            error_msg = result.stderr.decode('utf-8', errors='ignore') if result.stderr else "Unknown error"
-            print(f"[RECORD] ffmpeg failed (exit code {result.returncode}): {error_msg}")
-            raise RuntimeError(f"ffmpeg volume adjustment failed: {error_msg}")
-        
-        # Only replace if tmp_file was created successfully
-        if not os.path.exists(tmp_file):
-            raise FileNotFoundError(f"ffmpeg did not create temporary file: {tmp_file}")
-        
+    # Use shell=True like old code (safe since we control all parameters)
+    ffmpeg_cmd = f"ffmpeg -y -i {wav_file} -filter:a 'volume={VOLUME_GAIN}' {tmp_file}"
+    
+    result = subprocess.run(
+        ffmpeg_cmd,
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    
+    if result.returncode == 0 and os.path.exists(tmp_file):
         os.replace(tmp_file, wav_file)
         print(f"[RECORD] recording finished and saved successfully: {wav_file}")
-        return wav_file
-        
-    except subprocess.TimeoutExpired:
-        print(f"[RECORD] ffmpeg timeout after 30 seconds")
-        raise
-    except Exception as e:
-        print(f"[RECORD] Error during volume adjustment: {e}")
-        # Clean up temporary file if it exists
+    else:
+        print(f"[RECORD] Warning: ffmpeg volume adjustment may have failed")
+        # Continue anyway, original WAV file still exists
         if os.path.exists(tmp_file):
-            try:
-                os.remove(tmp_file)
-                print(f"[RECORD] Cleaned up temporary file: {tmp_file}")
-            except Exception as cleanup_error:
-                print(f"[RECORD] Failed to clean up tmp file: {cleanup_error}")
-        raise
+            os.remove(tmp_file)
+    
+    return wav_file
 
 def convert_to_mp3(wav_path):
     """Chuyển WAV sang MP3 và xóa file WAV"""

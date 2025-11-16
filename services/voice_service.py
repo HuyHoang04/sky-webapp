@@ -7,31 +7,11 @@ from datetime import datetime, timezone, timedelta
 import logging
 import requests
 import threading
-from concurrent.futures import ThreadPoolExecutor
-import atexit
 
 logger = logging.getLogger(__name__)
 
-# Module-level ThreadPoolExecutor for AI analysis tasks (bounded workers)
-# Max 3 concurrent AI analysis calls to prevent resource exhaustion
-_ai_analysis_executor = ThreadPoolExecutor(
-    max_workers=3,
-    thread_name_prefix="ai_analysis_worker"
-)
-
-def shutdown_ai_executor():
-    """
-    Gracefully shutdown the AI analysis executor
-    Called during application shutdown to wait for in-flight tasks
-    """
-    logger.info("[VOICE SERVICE] Shutting down AI analysis executor...")
-    # Note: timeout parameter only available in Python 3.12+
-    # For Python 3.10, we just wait indefinitely for tasks to complete
-    _ai_analysis_executor.shutdown(wait=True)
-    logger.info("[VOICE SERVICE] AI analysis executor shutdown complete")
-
-# Register shutdown handler
-atexit.register(shutdown_ai_executor)
+# Note: Using simple daemon threads instead of ThreadPoolExecutor
+# to avoid blocking gevent event loop in Flask-SocketIO
 
 class VoiceRecordService:
     """Service for managing voice distress records"""
@@ -226,16 +206,20 @@ class VoiceRecordService:
     
     def trigger_ai_analysis(self, record_id: int, ai_service_url: str):
         """
-        Trigger AI analysis in background (truly async via daemon thread)
+        Trigger AI analysis in background using simple daemon thread (gevent-compatible)
         This should be called AFTER the record is saved and returned to client
         Spawns a background thread that sends request to AI service with record_id and audio_url
         Returns immediately (True) after starting the background task
         """
         def _background_ai_call():
             """Background thread worker that performs the actual AI service call"""
+            import time
             from database import get_db
             
             try:
+                # Small delay to let Flask/gevent handle other requests first
+                time.sleep(0.1)
+                
                 # Create a new DB session for this thread
                 with get_db() as db_thread:
                     record = db_thread.query(VoiceRecord).filter(VoiceRecord.id == record_id).first()
@@ -316,20 +300,16 @@ class VoiceRecordService:
                 logger.error(f"[VOICE SERVICE] Record {record_id} not found, cannot trigger AI analysis")
                 return False
             
-            # Submit task to bounded ThreadPoolExecutor (non-daemon, survives until completion)
-            future = _ai_analysis_executor.submit(_background_ai_call)
+            # Use simple daemon thread instead of ThreadPoolExecutor (gevent-compatible)
+            # Daemon thread will not block Flask/gevent shutdown
+            bg_thread = threading.Thread(
+                target=_background_ai_call,
+                name=f"ai_analysis_{record_id}",
+                daemon=True
+            )
+            bg_thread.start()
             
-            # Optional: Add callback for task completion logging
-            def _task_done_callback(future_obj):
-                try:
-                    future_obj.result()  # Raise exception if task failed
-                    logger.debug(f"[VOICE SERVICE] AI analysis task completed for record {record_id}")
-                except Exception as task_error:
-                    logger.error(f"[VOICE SERVICE] AI analysis task failed for record {record_id}: {task_error}")
-            
-            future.add_done_callback(_task_done_callback)
-            
-            logger.info(f"[VOICE SERVICE] Submitted AI analysis task for record {record_id} to executor")
+            logger.info(f"[VOICE SERVICE] Started background AI analysis thread for record {record_id}")
             return True
             
         except Exception as e:

@@ -114,18 +114,13 @@ def handle_voice_records():
             if AI_ANALYSIS_ENABLED:
                 logger.info(f"[VOICE] Triggering AI analysis for record {record_id}")
                 
-                # Trigger AI analysis in background thread (non-blocking)
-                def analyze_in_background():
-                    try:
-                        with get_db() as db_bg:
-                            service_bg = VoiceRecordService(db_bg)
-                            service_bg.trigger_ai_analysis(record_id, AI_SERVICE_URL)
-                    except Exception as e:
-                        logger.error(f"[VOICE] Background AI analysis error: {str(e)}")
-                
-                analysis_thread = threading.Thread(target=analyze_in_background)
-                analysis_thread.daemon = True
-                analysis_thread.start()
+                # Service already handles background threading, no need for double-threading
+                try:
+                    with get_db() as db_bg:
+                        service_bg = VoiceRecordService(db_bg)
+                        service_bg.trigger_ai_analysis(record_id, AI_SERVICE_URL)
+                except Exception as e:
+                    logger.error(f"[VOICE] Failed to trigger AI analysis: {str(e)}")
             else:
                 logger.warning(f"[VOICE] AI analysis skipped for record {record_id} (AI_SERVICE_URL not configured)")
             

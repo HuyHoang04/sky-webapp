@@ -160,6 +160,25 @@ function displayRecords(records) {
             card.appendChild(intentDiv);
         }
         
+        // Add analysis items if available
+        if (record.analysis_items && Array.isArray(record.analysis_items) && record.analysis_items.length > 0) {
+            const itemsDiv = document.createElement('div');
+            itemsDiv.className = 'small mb-2';
+            
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-list';
+            itemsDiv.appendChild(icon);
+            
+            itemsDiv.appendChild(document.createTextNode(' Items: '));
+            
+            const itemsText = document.createElement('span');
+            itemsText.className = 'text-info';
+            itemsText.textContent = record.analysis_items.join(', '); // Safe: textContent escapes HTML
+            itemsDiv.appendChild(itemsText);
+            
+            card.appendChild(itemsDiv);
+        }
+        
         // Create badges row
         const badgesRow = document.createElement('div');
         badgesRow.className = 'd-flex gap-2 flex-wrap';
