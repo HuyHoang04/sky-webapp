@@ -12,6 +12,9 @@ import fcntl
 import cloudinary
 import cloudinary.uploader
 import requests 
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # ----------------- CẤU HÌNH -----------------
 BUTTON_PIN = 17
@@ -26,9 +29,9 @@ PULSE_SERVER = "/run/user/1000/pulse/native"
 MIC_DEVICE = "plughw:1,0"
 
 # Cloudinary
-CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME")
-CLOUD_KEY = os.environ.get("CLOUDINARY_API_KEY")
-CLOUD_SECRET = os.environ.get("CLOUDINARY_API_SECRET")
+CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
+CLOUD_KEY = os.getenv("CLOUDINARY_API_KEY")
+CLOUD_SECRET = os.getenv("CLOUDINARY_API_SECRET")
 if not CLOUD_NAME or not CLOUD_KEY or not CLOUD_SECRET:
     raise ValueError("[CONFIG] CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET must be set in environment variables")
 cloudinary.config(
@@ -38,7 +41,7 @@ cloudinary.config(
 )
 CLOUD_FOLDER = "help"
 
-WEB_APP_URL = os.environ.get("WEB_APP_URL")
+WEB_APP_URL = os.getenv("WEB_APP_URL")
 if not WEB_APP_URL:
     WEB_APP_URL = "http://localhost:5000/api/voice/records"
     print(f"[CONFIG]  WEB_APP_URL not set in environment, using default: {WEB_APP_URL}")
