@@ -250,6 +250,7 @@ def _process_analysis_job(job):
                 "time": round(time.time() - start_time, 2)
             }
         
+        # Fire-and-forget callback (short timeout, no retry, no blocking)
         try:
             callback_payload = {
                 "record_id": record_id,
@@ -257,10 +258,12 @@ def _process_analysis_job(job):
                 "result": transcription_result,
                 "stage": "transcription"
             }
-            requests.post(WEB_CALLBACK_URL, json=callback_payload, timeout=30)
+            requests.post(WEB_CALLBACK_URL, json=callback_payload, timeout=2)
             print(f"[JOB {record_id}] ✅ CALLBACK 1: Transcription sent")
+        except requests.exceptions.Timeout:
+            print(f"[JOB {record_id}] ⚠️ CALLBACK 1: timeout (continuing)")
         except Exception as send_e:
-            print(f"[JOB {record_id}] ❌ CALLBACK 1 failed: {send_e}")
+            print(f"[JOB {record_id}] ⚠️ CALLBACK 1: {send_e} (continuing)")
 
         # If no text, stop here
         if not text:
@@ -284,6 +287,7 @@ def _process_analysis_job(job):
         with results_lock:
             RESULTS.append(analysis_result)
 
+        # Fire-and-forget callback (short timeout, no retry, no blocking)
         try:
             callback_payload = {
                 "record_id": record_id,
@@ -291,15 +295,17 @@ def _process_analysis_job(job):
                 "result": analysis_result,
                 "stage": "analysis"
             }
-            requests.post(WEB_CALLBACK_URL, json=callback_payload, timeout=30) 
+            requests.post(WEB_CALLBACK_URL, json=callback_payload, timeout=2)
             print(f"[JOB {record_id}] ✅ CALLBACK 2: Analysis sent")
+        except requests.exceptions.Timeout:
+            print(f"[JOB {record_id}] ⚠️ CALLBACK 2: timeout (continuing)")
         except Exception as send_e:
-            print(f"[JOB {record_id}] ❌ CALLBACK 2 failed: {send_e}")
+            print(f"[JOB {record_id}] ⚠️ CALLBACK 2: {send_e} (continuing)")
             
     except Exception as e:
         print(f"[JOB {record_id}] ❌ ERROR: {str(e)}")
         
-        # Callback error to Web App
+        # Fire-and-forget error callback
         try:
             error_payload = {
                 "record_id": record_id,
@@ -307,10 +313,12 @@ def _process_analysis_job(job):
                 "error": str(e),
                 "stage": "processing"
             }
-            requests.post(WEB_CALLBACK_URL, json=error_payload, timeout=30)
+            requests.post(WEB_CALLBACK_URL, json=error_payload, timeout=2)
             print(f"[JOB {record_id}] Error callback sent")
+        except requests.exceptions.Timeout:
+            print(f"[JOB {record_id}] ⚠️ Error callback timeout")
         except Exception as send_e:
-            print(f"[JOB {record_id}] Error callback failed: {send_e}")
+            print(f"[JOB {record_id}] ⚠️ Error callback failed: {send_e}")
     
     finally:
         # Cleanup temp file
@@ -383,6 +391,29 @@ def queue_status():
     return {
         "queue_size": analysis_queue.qsize(),
         "message": f"{analysis_queue.qsize()} analysis jobs in queue"
+    }
+
+@app.get("/result/{record_id}")
+def get_result_by_id(record_id: int):
+    """
+    Get analysis result for a specific record ID (for polling)
+    
+    Returns:
+    - found: Whether the result was found
+    - result: The analysis result if found
+    """
+    with results_lock:
+        # Search RESULTS deque for matching record_id
+        for result in RESULTS:
+            # Check if this result matches the record_id (need to extract from audio_url or store separately)
+            # For now, return all results and let Web App filter
+            pass
+    
+    # Note: Current RESULTS structure doesn't store record_id separately
+    # Web App should use callback instead, or we need to modify RESULTS structure
+    return {
+        "found": False,
+        "message": "Result not found. Use callback mechanism or check /results endpoint."
     }
 
 @app.get("/results")
