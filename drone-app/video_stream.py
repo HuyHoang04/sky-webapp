@@ -74,7 +74,8 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
    
     def _detection_worker(self):
         """Background thread that processes AI detection without blocking video stream"""
-        logger.info("AI detection worker thread started")
+        logger.info("🤖 AI detection worker thread started (YOLO model: earth_person, sea_person)")
+        frame_count = 0
         while self.running:
             try:
                 # Check if there's a frame to process
@@ -84,6 +85,9 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
                         frame_to_process = self.detection_queue.pop(0)
                 
                 if frame_to_process is not None:
+                    frame_count += 1
+                    logger.debug(f"Processing frame #{frame_count} for AI detection...")
+                    
                     # Run detection in background thread
                     detections = self.detect_objects(frame_to_process)
                     
@@ -95,7 +99,7 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
                     time.sleep(0.05)
                     
             except Exception as e:
-                logger.error(f"Detection worker error: {e}")
+                logger.error(f"Detection worker error: {e}", exc_info=True)
                 time.sleep(0.1)
         
         logger.info("AI detection worker thread stopped")
@@ -216,6 +220,7 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
         Returns list of detections: [{'bbox':[x1,y1,x2,y2], 'class':int, 'score':float}, ...]
         """
         if self.ort_session is None:
+            logger.debug("No ONNX session, skipping detection")
             return []
 
         try:
@@ -227,15 +232,30 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
 
             outputs = self.ort_session.run(None, {self.ort_session.get_inputs()[0].name: input_frame})
             
-            # Parse detections using helper from main.py
+            # Parse detections using helper from main.py with dual thresholds and NMS
             h, w = frame.shape[:2]
-            from main import parse_onnx_detections
-            detections = parse_onnx_detections(outputs, input_size=(640, 640), orig_size=(w, h))
+            from main import parse_onnx_detections, DEFAULT_EARTH_PERSON_THRESHOLD, DEFAULT_SEA_PERSON_THRESHOLD, DEFAULT_NMS_IOU_THRESHOLD
+            detections = parse_onnx_detections(
+                outputs, 
+                input_size=(640, 640), 
+                orig_size=(w, h),
+                iou_threshold=DEFAULT_NMS_IOU_THRESHOLD,
+                earth_threshold=DEFAULT_EARTH_PERSON_THRESHOLD,
+                sea_threshold=DEFAULT_SEA_PERSON_THRESHOLD
+            )
+            
+            # DEBUG: Log detection results
+            if detections:
+                earth_count = sum(1 for d in detections if d['class'] == 0)
+                sea_count = sum(1 for d in detections if d['class'] == 1)
+                logger.info(f"✅ DETECTED: {len(detections)} objects (earth_person={earth_count}, sea_person={sea_count})")
+            else:
+                logger.debug("No objects detected in this frame")
+                
             return detections
            
         except Exception as e:
-            if self.counter % 30 == 0:
-                logger.error(f"Object detection error: {e}")
+            logger.error(f"Object detection error: {e}", exc_info=True)
             return []
 
     def draw_bboxes(self, frame, detections):

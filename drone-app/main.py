@@ -41,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger("drone-client")
 
 # Default configuration - Optimized for real-time streaming
-DEFAULT_SERVER_URL = "https://kanisha-unannexable-laraine.ngrok-free.dev"
+DEFAULT_SERVER_URL = "https://popular-catfish-slightly.ngrok-free.app"
 DEFAULT_DEVICE_ID = "drone-camera"  # Fixed device ID for easier debugging
 DEFAULT_DEVICE_NAME = "Drone Camera"
 
@@ -52,8 +52,17 @@ DEFAULT_HEIGHT = 720  # Video height in pixels
 DEFAULT_BITRATE = 4000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
                            # Lower = less bandwidth but lower quality
                            # Higher = better quality but more bandwidth
-DEFAULT_DETECTION_INTERVAL = 15  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
-                                  # Higher = less CPU usage but slower detection updates
+DEFAULT_DETECTION_FRAME_INTERVAL = 15  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
+                                        # Higher = less CPU usage but slower detection updates
+DEFAULT_DETECTION_PUBLISH_INTERVAL = 5.0  # seconds between detection publishes to server
+
+# DUAL THRESHOLD STRATEGY (Optimized for Config 7A)
+DEFAULT_CONFIDENCE_THRESHOLD = 0.05  # Fallback/general threshold
+DEFAULT_EARTH_PERSON_THRESHOLD = 0.06  # earth_person confidence (aerial: 4 detections)
+DEFAULT_SEA_PERSON_THRESHOLD = 0.03    # sea_person confidence (flood: 6E+5S detections)
+                                        # sea_person has higher confidence scores (max 0.57 vs 0.36)
+DEFAULT_NMS_IOU_THRESHOLD = 0.1        # NMS IoU threshold (lower = stricter duplicate removal)
+                                        # 0.1 provides good balance for flood scenarios
 # ===========================================================================
 
 DEFAULT_GPS_INTERVAL = 1.0  # seconds
@@ -81,7 +90,6 @@ pending_remote_ice = []
 user_stopped = False
 detection_task = None
 latest_gps = None
-DEFAULT_DETECTION_INTERVAL = 5.0  # seconds between detection publishes
 
 
 async def create_peer_connection():
@@ -135,7 +143,7 @@ async def create_peer_connection():
     if webcam:
         # Create a new video track or reuse existing one
         if not video_track:
-            video_track = ObjectDetectionStreamTrack(webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, ort_session, detection_interval=DEFAULT_DETECTION_INTERVAL)
+            video_track = ObjectDetectionStreamTrack(webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, ort_session, detection_interval=DEFAULT_DETECTION_FRAME_INTERVAL)
         # Capture the sender so we can tune RTP encoding parameters (bitrate/framerate)
         try:
             sender = peer_connection.addTrack(video_track)
@@ -255,26 +263,91 @@ def _nms_boxes(boxes, scores, iou_threshold=0.5):
     return keep
 
 
-def parse_onnx_detections(outputs, input_size=(640, 640), orig_size=None, conf_threshold=0.25, iou_threshold=0.45):
-    """Heuristic parser for common YOLO-like ONNX outputs.
+def parse_onnx_detections(outputs, input_size=(640, 640), orig_size=None, conf_threshold=0.05, iou_threshold=0.35, 
+                           earth_threshold=None, sea_threshold=None):
+    """Parser for YOLOv8 ONNX output format: [1, 6, 8400]
+    Format: [x, y, w, h, conf_class0, conf_class1]
     Returns list of detections: {'bbox':[x1,y1,x2,y2],'score':float,'class':int}
+    
+    Args:
+        earth_threshold: Optional separate threshold for earth_person (class 0)
+        sea_threshold: Optional separate threshold for sea_person (class 1)
     """
+    # DEBUG: Log output shapes
+    logger.debug(f"🔍 ONNX outputs count: {len(outputs)}")
+    for i, out in enumerate(outputs):
+        if isinstance(out, np.ndarray):
+            logger.debug(f"   Output[{i}] shape: {out.shape}, dtype: {out.dtype}")
+    
     dets = []
-    for out in outputs:
-        if not isinstance(out, np.ndarray):
-            continue
-        if out.size == 0:
-            continue
-        arr = out
-        if arr.ndim == 3 and arr.shape[0] == 1:
-            arr = arr[0]
-        if arr.ndim != 2:
-            try:
-                arr = arr.reshape(-1, arr.shape[-1])
-            except Exception:
+    
+    # YOLOv8 format: [1, 6, 8400] -> transpose to [8400, 6]
+    if len(outputs) > 0:
+        out = outputs[0]
+        if isinstance(out, np.ndarray) and out.ndim == 3 and out.shape[0] == 1:
+            # Shape: [1, 6, 8400] -> transpose to [8400, 6]
+            out = out[0].T  # Now shape is [8400, 6]
+            logger.debug(f"   Transposed to shape: {out.shape}")
+            
+            # Parse each detection
+            for detection in out:
+                x, y, w, h = detection[0], detection[1], detection[2], detection[3]
+                conf_class0 = detection[4]  # earth_person
+                conf_class1 = detection[5]  # sea_person
+                
+                # Use separate thresholds if provided, otherwise use general threshold
+                thresh_c0 = earth_threshold if earth_threshold is not None else conf_threshold
+                thresh_c1 = sea_threshold if sea_threshold is not None else conf_threshold
+                
+                # Check both classes with their respective thresholds
+                detected = False
+                cls = None
+                conf = 0.0
+                
+                if conf_class0 >= thresh_c0 and conf_class0 > conf_class1:
+                    cls = 0
+                    conf = conf_class0
+                    detected = True
+                elif conf_class1 >= thresh_c1 and conf_class1 >= conf_class0:
+                    cls = 1
+                    conf = conf_class1
+                    detected = True
+                
+                if not detected:
+                    continue
+                
+                # Convert center format (x,y,w,h) to corner format (x1,y1,x2,y2)
+                x1 = x - w / 2.0
+                y1 = y - h / 2.0
+                x2 = x + w / 2.0
+                y2 = y + h / 2.0
+                
+                dets.append({
+                    'bbox': [float(x1), float(y1), float(x2), float(y2)],
+                    'score': float(conf),
+                    'class': int(cls)
+                })
+            
+            logger.debug(f"   Found {len(dets)} detections before NMS")
+    
+    # Old fallback parser (keep for compatibility)
+    if not dets:
+        for out in outputs:
+            if not isinstance(out, np.ndarray):
                 continue
+            if out.size == 0:
+                continue
+            arr = out
+            if arr.ndim == 3 and arr.shape[0] == 1:
+                arr = arr[0]
+            if arr.ndim != 2:
+                try:
+                    arr = arr.reshape(-1, arr.shape[-1])
+                except Exception:
+                    continue
 
-        C = arr.shape[1]
+            C = arr.shape[1]
+            logger.debug(f"   Fallback: Processing array shape: {arr.shape}, columns: {C}")
         if C >= 6:
             sample = arr[0]
             is_norm = float(sample[0]) <= 1.01 and float(sample[1]) <= 1.01
@@ -355,7 +428,7 @@ def parse_onnx_detections(outputs, input_size=(640, 640), orig_size=None, conf_t
     return final
 
 
-async def detection_publisher_loop(sio_client, webcam, ort_session, interval=DEFAULT_DETECTION_INTERVAL):
+async def detection_publisher_loop(sio_client, webcam, ort_session, interval=DEFAULT_DETECTION_PUBLISH_INTERVAL):
     """Background task: periodically run detection on a frame and emit to server via Socket.IO"""
     logger.info("Starting detection publisher loop")
     try:
@@ -381,7 +454,14 @@ async def detection_publisher_loop(sio_client, webcam, ort_session, interval=DEF
                         outputs = ort_session.run(None, {ort_session.get_inputs()[0].name: img_in})
                         
                         h, w = frame.shape[:2]
-                        detections = parse_onnx_detections(outputs, input_size=(640, 640), orig_size=(w, h))
+                        detections = parse_onnx_detections(
+                            outputs, 
+                            input_size=(640, 640), 
+                            orig_size=(w, h),
+                            iou_threshold=DEFAULT_NMS_IOU_THRESHOLD,
+                            earth_threshold=DEFAULT_EARTH_PERSON_THRESHOLD,
+                            sea_threshold=DEFAULT_SEA_PERSON_THRESHOLD
+                        )
                     except Exception as e:
                         logger.debug(f"Detection inference error: {e}")
                 
@@ -708,7 +788,7 @@ async def main():
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH, help="Video width")
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help="Video height")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS, help="Video FPS")
-    parser.add_argument("--model", default="model_int8.onnx", help="Path to ONNX model")
+    parser.add_argument("--model", default="model_fp32.onnx", help="Path to ONNX model (use FP32, INT8 has zero confidence issue)")
     parser.add_argument("--no-detection", action="store_true", help="Disable object detection")
 
     args = parser.parse_args()
