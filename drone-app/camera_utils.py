@@ -159,9 +159,24 @@ async def setup_camera(width, height, fps):
 
 async def load_onnx_model(model_path):
     try:
+        import os
+        if not os.path.exists(model_path):
+            logger.error(f"❌ ONNX model file not found: {model_path}")
+            return None
+            
         session = ort.InferenceSession(model_path)
-        logger.info(f"ONNX model loaded: {model_path}")
+        
+        # Log model details
+        input_name = session.get_inputs()[0].name
+        input_shape = session.get_inputs()[0].shape
+        output_names = [out.name for out in session.get_outputs()]
+        
+        logger.info(f"✅ ONNX model loaded successfully: {model_path}")
+        logger.info(f"   Input: {input_name} {input_shape}")
+        logger.info(f"   Outputs: {output_names}")
+        logger.info(f"   Model type: YOLO (2 classes: earth_person, sea_person)")
+        
         return session
     except Exception as e:
-        logger.error(f"Failed to load ONNX model: {e}")
+        logger.error(f"❌ Failed to load ONNX model: {e}", exc_info=True)
         return None
