@@ -1,0 +1,67 @@
+{% extends "layout.html" %}
+
+{% block title %}Voice Distress Records{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
+<link rel="stylesheet" href="{{ url_for('static', filename='css/voice.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <!-- Sidebar - Voice Records List -->
+        <div class="col-md-4">
+            <div class="card bg-dark text-light">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-microphone"></i> Voice Records</h5>
+                    <button class="btn btn-sm btn-primary" onclick="loadVoiceRecords()">
+                        <i class="fas fa-sync"></i> Refresh
+                    </button>
+                </div>
+                <div class="card-body voice-sidebar p-2" id="voiceList">
+                    <p class="text-center text-muted py-3">Loading...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Map -->
+        <div class="col-md-8">
+            <div class="card bg-dark">
+                <div class="card-body p-2">
+                    <div id="voice-map"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Voice Record Detail Modal -->
+<div class="modal fade" id="voiceDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark text-light">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-volume-up"></i> Voice Record Detail</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="voiceDetailContent">
+                <!-- Content will be filled by JavaScript -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-success" id="btnResolveRecord">
+                    <i class="fas fa-check"></i> Mark Resolved
+                </button>
+                <button type="button" class="btn btn-danger" id="btnDeleteRecord">
+                    <i class="fas fa-trash"></i> Delete
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='js/voice.js') }}"></script>
+{% endblock %}

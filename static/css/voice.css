@@ -1,0 +1,138 @@
+/* Voice Records Page Styles */
+
+/* Semantic color variables for accessibility */
+:root {
+    --color-urgent: #ff4d4f;
+    --color-urgent-bg: rgba(255, 77, 79, 0.1);
+    --color-resolved: #52c41a;
+    --color-resolved-bg: rgba(82, 196, 26, 0.08);
+    --color-resolved-text: #389e0d;
+}
+
+#voice-map {
+    max-height: 80vh;
+    min-height: 400px;
+    height: 100%;
+    border-radius: 8px;
+}
+
+.voice-sidebar {
+    max-height: 80vh;
+    min-height: 400px;
+    overflow-y: auto;
+}
+
+.voice-card {
+    border-left: 4px solid transparent;
+    transition: all 0.3s ease;
+    margin-bottom: 1rem;
+}
+
+.voice-card:hover {
+    border-left-color: var(--color-urgent);
+    background: var(--color-urgent-bg);
+}
+
+.voice-urgent {
+    border-left-color: var(--color-urgent);
+    background: var(--color-urgent-bg);
+}
+
+.voice-resolved {
+    border-left-color: var(--color-resolved);
+    background: var(--color-resolved-bg);
+    position: relative;
+    /* Removed opacity for better readability */
+}
+
+/* Add checkmark icon for resolved items - accessible visual cue */
+.voice-resolved::before {
+    content: "✓";
+    position: absolute;
+    left: -2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 24px;
+    background-color: var(--color-resolved);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 14px;
+    line-height: 1;
+    z-index: 1;
+}
+
+/* Dim text for resolved items while maintaining contrast */
+.voice-resolved .card-body,
+.voice-resolved h6,
+.voice-resolved small {
+    color: var(--color-resolved-text) !important;
+}
+
+.status-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+}
+
+.audio-player {
+    width: 100%;
+    margin: 0.5rem 0;
+}
+
+/* Responsive Design for Mobile/Tablet */
+@media (max-width: 768px) {
+    #voice-map {
+        max-height: 50vh;
+        min-height: 300px;
+    }
+    
+    .voice-sidebar {
+        max-height: 50vh;
+        min-height: 300px;
+        margin-top: 1rem;
+    }
+    
+    .voice-card {
+        margin-bottom: 0.75rem;
+    }
+}
+
+/* Extra small screens (phones in portrait) */
+@media (max-width: 576px) {
+    #voice-map {
+        max-height: 40vh;
+        min-height: 250px;
+    }
+    
+    .voice-sidebar {
+        max-height: 60vh;
+        min-height: 200px;
+    }
+}
+
+/* Accessibility: Visually hidden but available to screen readers */
+.visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* Focus styles for keyboard navigation */
+.voice-card:focus {
+    outline: 3px solid var(--color-resolved);
+    outline-offset: 2px;
+}
+
+.voice-card:focus-visible {
+    box-shadow: 0 0 0 4px rgba(82, 196, 26, 0.3);
+}
