@@ -49,20 +49,20 @@ DEFAULT_DEVICE_NAME = "Drone Camera"
 DEFAULT_FPS = 30  # Frames per second (15-30 fps recommended)
 DEFAULT_WIDTH = 1280  # Video width in pixels
 DEFAULT_HEIGHT = 720  # Video height in pixels
-DEFAULT_BITRATE = 6000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
+DEFAULT_BITRATE = 3000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
                            # Lower = less bandwidth but lower quality
                            # Higher = better quality but more bandwidth
 DEFAULT_DETECTION_FRAME_INTERVAL = 8  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
                                         # Higher = less CPU usage but slower detection updates
 DEFAULT_DETECTION_PUBLISH_INTERVAL = 5.0  # seconds between detection publishes to server
 
-# DUAL THRESHOLD STRATEGY (Optimized for Config 7A)
+# DUAL THRESHOLD STRATEGY (Config 7A: tested and optimized)
 DEFAULT_CONFIDENCE_THRESHOLD = 0.05  # Fallback/general threshold
 DEFAULT_EARTH_PERSON_THRESHOLD = 0.06  # earth_person confidence (aerial: 4 detections)
 DEFAULT_SEA_PERSON_THRESHOLD = 0.03    # sea_person confidence (flood: 6E+5S detections)
                                         # sea_person has higher confidence scores (max 0.57 vs 0.36)
-DEFAULT_NMS_IOU_THRESHOLD = 0.1        # NMS IoU threshold (lower = stricter duplicate removal)
-                                        # 0.1 provides good balance for flood scenarios
+DEFAULT_NMS_IOU_THRESHOLD = 0.1        # NMS IoU threshold (Config 7A optimal value)
+                                        # 0.1 provides good balance for both scenarios
 # ===========================================================================
 
 DEFAULT_GPS_INTERVAL = 1.0  # seconds
