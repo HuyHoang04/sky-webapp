@@ -257,8 +257,9 @@ class VoiceRecordService:
                     logger.info(f"[VOICE SERVICE BG] Sending record {record_id} to AI service: {ai_service_url}")
                     logger.info(f"[VOICE SERVICE BG] Payload: {payload}")
                     
-                    # Use a longer timeout since AI processing is slow (Whisper + LLM)
-                    response = requests.post(ai_service_url, json=payload, timeout=180)
+                    # Short timeout (5s): AI service just needs to acknowledge and queue the job
+                    # AI service will do transcription + analysis in background, then callback when done
+                    response = requests.post(ai_service_url, json=payload, timeout=5)
                     
                     if response.status_code == 200:
                         logger.info(f"[VOICE SERVICE BG] AI analysis triggered successfully for record {record_id}")
@@ -276,7 +277,7 @@ class VoiceRecordService:
             except requests.exceptions.Timeout as timeout_error:
                 # Log timeout with details and record id
                 logger.error(
-                    f"[VOICE SERVICE BG] AI analysis timeout after 180s for record {record_id}: {str(timeout_error)}"
+                    f"[VOICE SERVICE BG] AI service timeout after 5s for record {record_id}: {str(timeout_error)}"
                 )
                 
                 # Update record to a terminal failed state so it won't remain 'processing'
@@ -285,7 +286,7 @@ class VoiceRecordService:
                         record_timeout = db_timeout.query(VoiceRecord).filter(VoiceRecord.id == record_id).first()
                         if record_timeout:
                             record_timeout.analysis_status = 'failed'
-                            record_timeout.analysis_error = f"AI service timeout after 180 seconds: {str(timeout_error)}"
+                            record_timeout.analysis_error = f"AI service not responding (timeout after 5s): {str(timeout_error)}"
                             record_timeout.analyzed_at = datetime.now(timezone.utc)
                             db_timeout.commit()
                             logger.info(f"[VOICE SERVICE BG] Record {record_id} marked as failed due to timeout")

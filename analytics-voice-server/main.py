@@ -204,28 +204,76 @@ results_lock = threading.Lock()
 
 def _process_analysis_job(job):
     """
-    Process a single analysis job (runs in background queue)
+    Process a COMPLETE job (download + transcription + analysis) in background
     Job structure: {
         "record_id": int,
         "audio_url": str,
-        "text": str,
         "start_time": float
     }
     """
     record_id = job['record_id']
     audio_url = job['audio_url']
-    text = job['text']
     start_time = job['start_time']
+    tmp_path = None
     
     try:
-        print(f"[ANALYSIS JOB] Starting LLM analysis for record {record_id}")
-        full_prompt = build_prompt(text)
+        # STEP 1: Download audio
+        print(f"[JOB {record_id}] Downloading audio from {audio_url}...")
+        r = requests.get(audio_url, timeout=30)
+        r.raise_for_status()
         
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", mode='wb') as tmp: 
+            tmp.write(r.content)
+            tmp_path = tmp.name
+        print(f"[JOB {record_id}] Download complete: {tmp_path}")
+
+        # STEP 2: Whisper transcription
+        print(f"[JOB {record_id}] Starting Whisper transcription...")
+        trans = whisper_model.transcribe(tmp_path, language="vi", fp16=(device.type=="cuda"))
+        text = trans["text"].strip()
+        print(f"[JOB {record_id}] Transcribed: '{text}'")
+
+        # ============ CALLBACK 1: TRANSCRIPTION ============
+        if not text:
+            print(f"[JOB {record_id}] No text transcribed")
+            transcription_result = {
+                "audio_url": audio_url,
+                "text_goc": "",
+                "analysis": {"intent": "Không rõ", "items": []},
+                "time": round(time.time() - start_time, 2)
+            }
+        else:
+            transcription_result = {
+                "audio_url": audio_url,
+                "text_goc": text,
+                "analysis": None,
+                "time": round(time.time() - start_time, 2)
+            }
+        
+        try:
+            callback_payload = {
+                "record_id": record_id,
+                "success": True,
+                "result": transcription_result,
+                "stage": "transcription"
+            }
+            requests.post(WEB_CALLBACK_URL, json=callback_payload, timeout=30)
+            print(f"[JOB {record_id}] ✅ CALLBACK 1: Transcription sent")
+        except Exception as send_e:
+            print(f"[JOB {record_id}] ❌ CALLBACK 1 failed: {send_e}")
+
+        # If no text, stop here
+        if not text:
+            return
+
+        # STEP 3: LLM Analysis
+        print(f"[JOB {record_id}] Starting LLM analysis...")
+        full_prompt = build_prompt(text)
         llm_output_text = generate_text(full_prompt) 
         analysis_json = parse_llm_output(llm_output_text)
-        print(f"[ANALYSIS JOB] Analysis complete for record {record_id}: {analysis_json.get('intent')}")
+        print(f"[JOB {record_id}] Analysis complete: {analysis_json.get('intent')}")
 
-        # ============ CALLBACK 2: GỬI ANALYSIS SAU KHI PHÂN TÍCH XONG ============
+        # ============ CALLBACK 2: ANALYSIS ============
         analysis_result = {
             "audio_url": audio_url,
             "text_goc": text,
@@ -233,7 +281,6 @@ def _process_analysis_job(job):
             "time": round(time.time() - start_time, 2)
         }
         
-        # Thread-safe append to results
         with results_lock:
             RESULTS.append(analysis_result)
 
@@ -242,15 +289,15 @@ def _process_analysis_job(job):
                 "record_id": record_id,
                 "success": True,
                 "result": analysis_result,
-                "stage": "analysis"  # Đánh dấu đây là callback analysis
+                "stage": "analysis"
             }
             requests.post(WEB_CALLBACK_URL, json=callback_payload, timeout=30) 
-            print(f"[CALLBACK 2] ✅ Analysis sent to Web App for record {record_id}")
+            print(f"[JOB {record_id}] ✅ CALLBACK 2: Analysis sent")
         except Exception as send_e:
-            print(f"[CALLBACK 2] ❌ Failed to send analysis to Web App: {send_e}")
+            print(f"[JOB {record_id}] ❌ CALLBACK 2 failed: {send_e}")
             
     except Exception as e:
-        print(f"[ANALYSIS JOB ERROR] Record {record_id}: {str(e)}")
+        print(f"[JOB {record_id}] ❌ ERROR: {str(e)}")
         
         # Callback error to Web App
         try:
@@ -258,12 +305,21 @@ def _process_analysis_job(job):
                 "record_id": record_id,
                 "success": False,
                 "error": str(e),
-                "stage": "analysis"
+                "stage": "processing"
             }
             requests.post(WEB_CALLBACK_URL, json=error_payload, timeout=30)
-            print(f"[CALLBACK 2]  Analysis error sent to Web App")
+            print(f"[JOB {record_id}] Error callback sent")
         except Exception as send_e:
-            print(f"[CALLBACK 2] Failed to send error: {send_e}")
+            print(f"[JOB {record_id}] Error callback failed: {send_e}")
+    
+    finally:
+        # Cleanup temp file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+                print(f"[JOB {record_id}] Cleaned up temp file")
+            except Exception as cleanup_e:
+                print(f"[JOB {record_id}] Cleanup error: {cleanup_e}")
 
 @app.get("/")
 def read_root():
@@ -273,21 +329,21 @@ def read_root():
 @app.post("/analyze")
 async def analyze_voice(payload: dict):
     """
-    Receive analysis request from Web App
+    Receive analysis request from Web App - RETURN IMMEDIATELY
     Expected payload: {
         "record_id": int,
         "audio_url": "cloudinary_url"
     }
+    
+    Returns: {"success": true, "message": "Job queued", "queue_position": N}
+    
+    Processing happens in background:
+    1. Download audio
+    2. Whisper transcription → Callback 1 (transcription)
+    3. LLM analysis → Callback 2 (analysis)
     """
-    start = time.time()
-    
-    # Initialize variables early to avoid UnboundLocalError in exception handlers
-    record_id = None
-    audio_url = None
-    tmp_path = None
-    
     try:
-        # Extract and validate required fields
+        # Validate required fields
         audio_url = payload.get("audio_url")
         record_id = payload.get("record_id")
 
@@ -296,113 +352,30 @@ async def analyze_voice(payload: dict):
         
         if not record_id:
             return {"success": False, "error": "Thiếu record_id"}
-        # Tải file âm thanh từ URL (Cloudinary trả về MP3)
-        print(f"[DOWNLOAD] Downloading audio from {audio_url}...")
-        r = requests.get(audio_url)
-        r.raise_for_status()
         
-        # Lưu với suffix .mp3 (vì Raspberry Pi upload MP3 lên Cloudinary)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", mode='wb') as tmp: 
-            tmp.write(r.content)
-            tmp_path = tmp.name
-        print(f"[DOWNLOAD] Download complete, saved to: {tmp_path}")
-
-        # Whisper chuyển giọng nói thành text
-        print("[WHISPER] Starting Whisper transcription...")
-        trans = whisper_model.transcribe(tmp_path, language="vi", fp16=(device.type=="cuda"))
-        text = trans["text"].strip()
-        print(f"[WHISPER] Transcribed Text: '{text}'")
-
-        if not text:
-            # Không có văn bản → vẫn callback về Web App
-            print("[WHISPER] No text transcribed")
-            result = {
-                "audio_url": audio_url,
-                "text_goc": "",
-                "analysis": {"intent": "Không rõ", "items": []},
-                "time": round(time.time() - start, 2)
-            }
-            
-            # Callback to Web App
-            try:
-                callback_payload = {
-                    "record_id": record_id,
-                    "success": True,
-                    "result": result
-                }
-                requests.post(WEB_CALLBACK_URL, json=callback_payload, timeout=30)
-                print(f"[API] Empty transcription result sent to Web App")
-            except Exception as send_e:
-                print(f"[API] Failed to send to Web App: {send_e}")
-            
-            return {"success": True, "result": result}
-
-        # ============ CALLBACK 1: GỬI TEXT NGAY SAU KHI TRANSCRIBE XONG ============
-        print("==== CALLBACK 1: SENDING TRANSCRIPTION TO WEB APP ====")
-        transcription_result = {
-            "audio_url": audio_url,
-            "text_goc": text,
-            "analysis": None,  # Chưa có analysis
-            "time": round(time.time() - start, 2)
-        }
-        
-        try:
-            callback_payload = {
-                "record_id": record_id,
-                "success": True,
-                "result": transcription_result,
-                "stage": "transcription"  # Đánh dấu đây là callback transcription
-            }
-            requests.post(WEB_CALLBACK_URL, json=callback_payload, timeout=30)
-            print(f"[CALLBACK 1]  Transcription sent to Web App (fast response)")
-        except Exception as send_e:
-            print(f"[CALLBACK 1]  Failed to send transcription to Web App: {send_e}")
-
-        # ============ ADD ANALYSIS JOB TO QUEUE (CHẠY BACKGROUND) ============
-        analysis_job = {
+        # Queue the entire job (download + transcription + analysis) for background processing
+        full_job = {
             "record_id": record_id,
             "audio_url": audio_url,
-            "text": text,
-            "start_time": start
+            "start_time": time.time()
         }
         
         with analysis_queue_lock:
             queue_size = analysis_queue.qsize()
-            analysis_queue.put(analysis_job)
-            print(f"[QUEUE] Analysis job added for record {record_id} (Queue position: {queue_size + 1})")
+            analysis_queue.put(full_job)
+            print(f"[API] ✅ Job queued for record {record_id} (Position: {queue_size + 1})")
         
-        # Return immediately - analysis will run in background
+        # Return immediately to Web App
         return {
             "success": True, 
-            "message": "Transcription completed, analysis queued",
+            "message": "Job queued for processing",
             "queue_position": queue_size + 1,
-            "transcription": text
+            "record_id": record_id
         }
 
     except Exception as e:
-        print(f"[API] An error occurred: {str(e)}")
-        
-        # Callback error to Web App (only if we have a valid record_id)
-        if record_id is not None:
-            try:
-                error_payload = {
-                    "record_id": record_id,
-                    "success": False,
-                    "error": str(e)
-                }
-                requests.post(WEB_CALLBACK_URL, json=error_payload, timeout=30)
-                print(f"[API] Error sent to Web App callback for record {record_id}")
-            except Exception as send_e:
-                print(f"[API] Failed to send error to Web App: {send_e}")
-        else:
-            print(f"[API] No record_id available, skipping error callback")
-        
+        print(f"[API] Error queuing job: {str(e)}")
         return {"success": False, "error": str(e)}
-
-    finally:
-        # Dọn dẹp file tạm
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
 @app.get("/queue/status")
 def queue_status():
