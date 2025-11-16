@@ -13,7 +13,7 @@
     .video-container {
         position: relative;
         width: 100%;
-        height: 400px;
+        height: 540px;  /* Increased for 720p (16:9 aspect ratio) */
         background-color: #222;
         border-radius: 5px;
         overflow: hidden;
@@ -21,7 +21,7 @@
     .video-container video {
         width: 100%;
         height: 100%;
-        object-fit: cover;
+        object-fit: contain;  /* Maintain aspect ratio for 720p */
     }
     .device-status {
         padding: 10px;
@@ -71,7 +71,7 @@
     <div class="row">
         <!-- Video Stream Panel -->
         <div class="col-lg-8 mb-4">
-            <div class="card h-100">
+            <div class="card">
                 <div class="card-header">
                     <div class="d-flex justify-content-between align-items-center">
                         <h5 class="me-4"><i class="fas fa-video me-2"></i> Live Video Feed</h5>
@@ -127,6 +127,38 @@
                                 <button id="fullscreenBtn" class="btn btn-outline-light btn-sm">
                                     <i class="fas fa-expand"></i>
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Detection Stats Card - Below Video -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-users me-2"></i>Thống kê phát hiện</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-4">
+                            <div class="p-3 border border-success rounded">
+                                <i class="fas fa-male fa-2x text-success mb-2"></i>
+                                <h6>Người trên đất</h6>
+                                <h3 class="text-success" id="earthPersonCount">0</h3>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="p-3 border border-warning rounded">
+                                <i class="fas fa-swimmer fa-2x text-warning mb-2"></i>
+                                <h6>Người trên biển</h6>
+                                <h3 class="text-warning" id="seaPersonCount">0</h3>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="p-3 border border-info rounded">
+                                <i class="fas fa-users fa-2x text-info mb-2"></i>
+                                <h6>Tổng số người</h6>
+                                <h3 class="text-info" id="totalPersonCount">0</h3>
                             </div>
                         </div>
                     </div>
@@ -478,6 +510,15 @@
     updateFlightTime();
     setInterval(updateFlightTime, 1000);
     
+    // Listen for detection updates via Socket.IO
+    socket.on('detection_update', function(data) {
+        console.log('Received detection update:', data);
+        // Update person counts
+        document.getElementById('earthPersonCount').textContent = data.earth_person_count || 0;
+        document.getElementById('seaPersonCount').textContent = data.sea_person_count || 0;
+        document.getElementById('totalPersonCount').textContent = data.person_count || 0;
+    });
+    
     // Xử lý khi nhận dữ liệu GPS mới
     socket.on('gps_update', function(data) {
         console.log('Nhận dữ liệu GPS:', data);
@@ -599,85 +640,111 @@
         }
     }
 
-    // Capture current frame from active video element and POST to server
+    // Capture high-quality image directly from drone camera (independent of WebRTC)
     async function captureCurrentFrame() {
         try {
-            // Determine active video element
+            const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
+            
+            streamStatus.textContent = 'Đang chụp ảnh...';
+            streamStatus.className = 'badge bg-info';
+            
+            // Request high-quality image directly from drone's capture API
+            // This is independent of WebRTC stream and provides better quality
+            const droneHost = 'localhost'; // Change to drone's IP if needed
+            const dronePort = 8080;
+            const captureUrl = `http://${droneHost}:${dronePort}/capture?quality=95`;
+            
+            try {
+                // Fetch high-quality image from drone
+                const response = await fetch(captureUrl);
+                if (!response.ok) {
+                    throw new Error(`Drone capture failed: ${response.status}`);
+                }
+                
+                const imageBlob = await response.blob();
+                
+                // Send to server for storage
+                const form = new FormData();
+                form.append('image', imageBlob, `${deviceId}_capture.jpg`);
+                form.append('device_id', deviceId);
+                
+                const saveResponse = await fetch('/api/capture', { method: 'POST', body: form });
+                
+                if (saveResponse.ok) {
+                    const result = await saveResponse.json();
+                    streamStatus.textContent = 'Ảnh đã lưu';
+                    streamStatus.className = 'badge bg-success';
+                    console.log('Image saved:', result.path);
+                    
+                    // Reset status after 3 seconds
+                    setTimeout(() => {
+                        streamStatus.textContent = peerConnection && peerConnection.connectionState === 'connected' ? 'Đang phát' : 'Ready';
+                        streamStatus.className = peerConnection && peerConnection.connectionState === 'connected' ? 'badge bg-success' : 'badge bg-secondary';
+                    }, 3000);
+                } else {
+                    const text = await saveResponse.text();
+                    console.error('Save failed:', saveResponse.status, text);
+                    streamStatus.textContent = 'Lỗi lưu ảnh';
+                    streamStatus.className = 'badge bg-danger';
+                }
+            } catch (err) {
+                console.error('Capture error:', err);
+                streamStatus.textContent = 'Lỗi chụp ảnh';
+                streamStatus.className = 'badge bg-danger';
+                
+                // Fallback: try to capture from video element if drone API fails
+                console.log('Falling back to video element capture...');
+                await captureFromVideoElement();
+            }
+            
+        } catch (err) {
+            console.error('Capture error:', err);
+            alert('Lỗi khi chụp ảnh: ' + err.message);
+        }
+    }
+    
+    // Fallback method: capture from video element (lower quality)
+    async function captureFromVideoElement() {
+        try {
             let videoEl = currentVideoElement;
             if (!videoEl && window.videoLayoutManager) videoEl = window.videoLayoutManager.getActiveVideoElement();
             if (!videoEl || !videoEl.srcObject) {
-                // Try to find any video element in the grid
                 const anyVideo = document.querySelector('#videoGrid video');
                 if (!anyVideo || !anyVideo.srcObject) {
-                    alert('Không có luồng video để chụp');
+                    streamStatus.textContent = 'Không có video';
+                    streamStatus.className = 'badge bg-danger';
                     return;
                 }
                 videoEl = anyVideo;
             }
 
-            // Draw frame to canvas
-            const track = videoEl.srcObject.getVideoTracks && videoEl.srcObject.getVideoTracks()[0];
-            // Wait briefly until video has current frame data
-            const waitForFrame = () => new Promise((resolve) => {
-                if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0) return resolve(true);
-                const onCanPlay = () => {
-                    videoEl.removeEventListener('playing', onCanPlay);
-                    resolve(true);
-                };
-                // Timeout fallback
-                const t = setTimeout(() => { videoEl.removeEventListener('playing', onCanPlay); resolve(false); }, 500);
-                videoEl.addEventListener('playing', onCanPlay);
-            });
-            const ok = await waitForFrame();
             const width = videoEl.videoWidth || 640;
             const height = videoEl.videoHeight || 480;
-            if (!ok && (!width || !height)) {
-                alert('Khung hình video chưa sẵn sàng để chụp');
-                return;
-            }
             const canvas = document.createElement('canvas');
             canvas.width = width;
             canvas.height = height;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(videoEl, 0, 0, width, height);
 
-            // Convert to blob and send to server
             canvas.toBlob(async (blob) => {
-                if (!blob) {
-                    alert('Không thể lấy khung hình');
-                    return;
-                }
-
+                if (!blob) return;
                 const form = new FormData();
+                const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
                 form.append('image', blob, 'capture.jpg');
-                // Include device id if available
-                const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'Drone1';
                 form.append('device_id', deviceId);
-
-                streamStatus.textContent = 'Đang gửi ảnh...';
-                streamStatus.className = 'badge bg-info';
 
                 try {
                     const resp = await fetch('/api/capture', { method: 'POST', body: form });
                     if (resp.ok) {
-                        streamStatus.textContent = 'Ảnh đã lưu';
+                        streamStatus.textContent = 'Ảnh đã lưu (fallback)';
                         streamStatus.className = 'badge bg-success';
-                    } else {
-                        const text = await resp.text();
-                        console.error('Capture failed:', resp.status, text);
-                        streamStatus.textContent = 'Lỗi lưu ảnh';
-                        streamStatus.className = 'badge bg-danger';
                     }
                 } catch (err) {
-                    console.error('Error sending capture:', err);
-                    streamStatus.textContent = 'Lỗi gửi ảnh';
-                    streamStatus.className = 'badge bg-danger';
+                    console.error('Fallback capture error:', err);
                 }
-            }, 'image/jpeg', 0.9);
-
+            }, 'image/jpeg', 0.95);
         } catch (err) {
-            console.error('Capture error:', err);
-            alert('Lỗi khi chụp ảnh: ' + err.message);
+            console.error('Fallback capture error:', err);
         }
     }
 
@@ -694,16 +761,29 @@
     
     // Xử lý khi nhận được offer từ server (từ drone)
     socket.on('webrtc_offer', async function(data) {
-        if (!peerConnection) return;
-        
         try {
-            console.log('Received offer from drone, creating answer');
+            console.log('Received offer from drone:', data.device_id);
+            
+            // Nếu chưa có peer connection hoặc đang kết nối với device khác, tạo mới
+            const currentDeviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id');
+            if (!peerConnection || data.device_id !== currentDeviceId) {
+                console.log('Offer not for current device or no peer connection, ignoring');
+                return;
+            }
+            
+            // Kiểm tra signaling state
+            if (peerConnection.signalingState !== 'stable' && peerConnection.signalingState !== 'have-local-offer') {
+                console.log('PeerConnection not in correct state for offer, current state:', peerConnection.signalingState);
+                return;
+            }
+            
             const remoteDesc = new RTCSessionDescription({
                 sdp: data.sdp,
                 type: data.type
             });
             
             await peerConnection.setRemoteDescription(remoteDesc);
+            console.log('Set remote description (offer) successfully');
             
             // Tạo answer
             const answer = await peerConnection.createAnswer();
@@ -722,21 +802,9 @@
         }
     });
     
-    // Xử lý khi nhận được answer từ server
+    // Xử lý khi nhận được answer từ server (không nên xảy ra vì drone là offerer)
     socket.on('webrtc_answer', async function(data) {
-        if (!peerConnection) return;
-        
-        try {
-            console.log('Received answer from server, setting remote description');
-            const remoteDesc = new RTCSessionDescription({
-                type: data.type,
-                sdp: data.sdp
-            });
-            await peerConnection.setRemoteDescription(remoteDesc);
-            console.log('Remote description set successfully');
-        } catch (error) {
-            console.error('Lỗi khi xử lý answer:', error);
-        }
+        console.log('Received unexpected answer - drone should be offerer, ignoring');
     });
     
     // Xử lý khi nhận được ICE candidate từ server
@@ -744,7 +812,11 @@
         if (!peerConnection) return;
         
         try {
-            await peerConnection.addIceCandidate(data.candidate);
+            // data.candidate should be the ICE candidate object with candidate, sdpMid, sdpMLineIndex
+            if (data.candidate) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                console.log('Added ICE candidate from server');
+            }
         } catch (error) {
             console.error('Lỗi khi xử lý ICE candidate:', error);
         }

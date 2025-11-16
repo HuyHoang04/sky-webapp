@@ -17,6 +17,11 @@ logger = logging.getLogger("drone-client")
 # Video stream will call camera.get_frame() to retrieve the latest frame.
 
 
+# Class names and colors for bounding boxes
+CLASS_NAMES = {0: 'earth_person', 1: 'sea_person'}
+CLASS_COLORS = {0: (0, 255, 0), 1: (0, 165, 255)}  # Green for earth_person, Orange for sea_person
+
+
 class ObjectDetectionStreamTrack(VideoStreamTrack):
     """
     Optimized video stream track that captures from a camera and performs object detection
@@ -34,6 +39,8 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
         self.ort_session = ort_session
         self.running = True
         self.active = True
+        self.cached_detections = []
+        self.detection_update_interval = 3  # Update detections every N frames for smoothness
    
     def _capture_frames(self):
         """Background thread to continuously capture frames"""
@@ -119,10 +126,13 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
                                 frame = frame[:, :, :3]
             except Exception as e:
                 logger.debug(f"Frame normalization error: {e}")
-            # Only perform object detection if ort_session exists and not every frame
-            # to reduce CPU usage (e.g., every 3rd frame)
-            if self.ort_session is not None and self.counter % 3 == 0:
-                frame = self.detect_objects(frame)
+            # Update detections periodically for efficiency
+            if self.ort_session is not None and self.counter % self.detection_update_interval == 0:
+                self.cached_detections = self.detect_objects(frame)
+            
+            # Draw bounding boxes on every frame using cached detections
+            if self.cached_detections:
+                frame = self.draw_bboxes(frame, self.cached_detections)
 
 
         # Convert to VideoFrame with proper timing
@@ -148,41 +158,53 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
     def detect_objects(self, frame):
         """
         Perform object detection on the frame using ONNX model
+        Returns list of detections: [{'bbox':[x1,y1,x2,y2], 'class':int, 'score':float}, ...]
         """
         if self.ort_session is None:
-            return frame
-
+            return []
 
         try:
-            # Resize and preprocess more efficiently
             input_size = (640, 640)
             input_frame = cv2.resize(frame, input_size)
-           
-            # Normalize and transpose in one step if possible
             input_frame = input_frame.astype(np.float32) / 255.0
             input_frame = np.transpose(input_frame, (2, 0, 1))
             input_frame = np.expand_dims(input_frame, axis=0)
 
-
-            # Run inference with a timeout
-            outputs = self.ort_session.run(None, {"images": input_frame})
-           
-            # Process outputs (simplified)
-            # Just add a text overlay to indicate detection is working
-            cv2.putText(
-                frame,
-                f"Object Detection Active",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2
-            )
+            outputs = self.ort_session.run(None, {self.ort_session.get_inputs()[0].name: input_frame})
+            
+            # Parse detections using helper from main.py
+            h, w = frame.shape[:2]
+            from main import parse_onnx_detections
+            detections = parse_onnx_detections(outputs, input_size=(640, 640), orig_size=(w, h))
+            return detections
            
         except Exception as e:
-            # Log error but don't spam the log
-            if self.counter % 30 == 0:  # Log only every 30 frames
+            if self.counter % 30 == 0:
                 logger.error(f"Object detection error: {e}")
+            return []
 
-
+    def draw_bboxes(self, frame, detections):
+        """
+        Draw bounding boxes on frame for detected objects
+        """
+        for det in detections:
+            bbox = det['bbox']
+            cls = det.get('class', 0)
+            score = det.get('score', 0.0)
+            
+            x1, y1, x2, y2 = map(int, bbox)
+            color = CLASS_COLORS.get(cls, (255, 255, 255))
+            label = CLASS_NAMES.get(cls, f'class_{cls}')
+            
+            # Draw rectangle
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            
+            # Draw label background
+            label_text = f"{label}: {score:.2f}"
+            (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(frame, (x1, y1 - th - 4), (x1 + tw, y1), color, -1)
+            
+            # Draw label text
+            cv2.putText(frame, label_text, (x1, y1 - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
         return frame

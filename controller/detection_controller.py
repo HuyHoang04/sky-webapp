@@ -1,7 +1,37 @@
 from flask import Blueprint, render_template, request, jsonify
 from datetime import datetime
+from socket_instance import socketio
+import logging
+
+logger = logging.getLogger(__name__)
 
 detection_blueprint = Blueprint('detection', __name__)
+
+# Socket.IO event handler for detection results from drone
+@socketio.on('detection_result')
+def handle_detection_result(data):
+    """Handle detection result from drone and broadcast to clients"""
+    try:
+        device_id = data.get('device_id')
+        earth_count = data.get('earth_person_count', 0)
+        sea_count = data.get('sea_person_count', 0)
+        total_count = data.get('person_count', 0)
+        
+        logger.info(f"Detection from {device_id}: earth={earth_count}, sea={sea_count}, total={total_count}")
+        
+        # Broadcast to all connected clients
+        socketio.emit('detection_update', {
+            'device_id': device_id,
+            'earth_person_count': earth_count,
+            'sea_person_count': sea_count,
+            'person_count': total_count,
+            'timestamp': data.get('timestamp'),
+            'detections': data.get('detections', []),
+            'gps': data.get('gps')
+        })
+        
+    except Exception as e:
+        logger.error(f"Error handling detection result: {e}")
 
 @detection_blueprint.route('/detection')
 def detection_page():
@@ -30,7 +60,9 @@ def analyze_items():
 @detection_blueprint.route('/api/detections', methods=['GET'])
 def get_detections():
     # TODO: Get detections from database
-    return jsonify([])
+    return jsonify([]) # SAI -> Hiển thị hình ảnh từ cloudinary gửi về 
+
+# Đẩy ảnh cho server có AI -> đẩy cho cloudinary -> trả về ảnh đã bounding box cho frontend hiển thị
 
 @detection_blueprint.route('/api/recordings', methods=['GET'])
 def get_recordings():
