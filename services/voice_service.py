@@ -72,6 +72,11 @@ class VoiceRecordService:
         try:
             record = self.db.query(VoiceRecord).filter(VoiceRecord.id == record_id).first()
             if record:
+                # 🔍 DEBUG LOG: Before saving
+                logger.info(f"[VOICE SERVICE] 🔧 Updating record {record_id}:")
+                logger.info(f"[VOICE SERVICE]   - Intent: {intent}")
+                logger.info(f"[VOICE SERVICE]   - Items (input): {items} (type: {type(items)})")
+                
                 record.analysis_intent = intent
                 record.analysis_items = items
                 record.analysis_status = 'completed' if not error else 'failed'
@@ -88,7 +93,13 @@ class VoiceRecordService:
                     record.priority = 'medium'
                 
                 self.db.commit()
-                logger.info(f"[VOICE SERVICE] Updated analysis for record ID: {record_id}")
+                
+                # 🔍 DEBUG LOG: After saving, verify what was saved
+                self.db.refresh(record)
+                logger.info(f"[VOICE SERVICE] ✅ Saved to DB for record {record_id}:")
+                logger.info(f"[VOICE SERVICE]   - Intent (saved): {record.analysis_intent}")
+                logger.info(f"[VOICE SERVICE]   - Items (saved): {record.analysis_items}")
+                
                 return record
             return None
         except Exception as e:

@@ -155,6 +155,14 @@ def handle_voice_records():
                 service = VoiceRecordService(db)
                 records = service.get_all_records(limit=limit, unresolved_only=unresolved_only)
                 
+                # 🔍 DEBUG LOG: Check first record with analysis
+                for record in records:
+                    if record.analysis_items:
+                        logger.info(f"[VOICE API] 📤 Sending record {record.id} to frontend:")
+                        logger.info(f"[VOICE API]   - Intent: {record.analysis_intent}")
+                        logger.info(f"[VOICE API]   - Items: {record.analysis_items}")
+                        break
+                
                 return jsonify({
                     'status': 'success',
                     'count': len(records),
@@ -314,8 +322,14 @@ def ai_analysis_callback():
                         items = analysis.get('items', [])
                         error = analysis.get('error')
                         
+                        # 🔍 DEBUG LOG: Print full callback data
+                        logger.info(f"[VOICE CALLBACK 2] 📦 Full result data: {result}")
+                        logger.info(f"[VOICE CALLBACK 2] 🧠 Analysis object: {analysis}")
+                        logger.info(f"[VOICE CALLBACK 2] 🎯 Intent: {intent}")
+                        logger.info(f"[VOICE CALLBACK 2] 📋 Items: {items} (type: {type(items)})")
+                        
                         service.update_analysis(record_id, intent, items, error)
-                        logger.info(f"[VOICE CALLBACK 2] ✅ Analysis updated for record {record_id}: {intent}")
+                        logger.info(f"[VOICE CALLBACK 2] ✅ Analysis updated for record {record_id}: {intent} with {len(items)} items")
                         
                         return jsonify({
                             'status': 'success',
