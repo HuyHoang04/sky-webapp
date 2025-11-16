@@ -11,6 +11,7 @@ import logging
 import os
 import time
 import uuid
+import threading
 from datetime import datetime
 import nest_asyncio
 
@@ -52,9 +53,9 @@ DEFAULT_HEIGHT = 720  # Video height in pixels
 DEFAULT_BITRATE = 3000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
                            # Lower = less bandwidth but lower quality
                            # Higher = better quality but more bandwidth
-DEFAULT_DETECTION_FRAME_INTERVAL = 8  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
+DEFAULT_DETECTION_FRAME_INTERVAL = 5  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
                                         # Higher = less CPU usage but slower detection updates
-DEFAULT_DETECTION_PUBLISH_INTERVAL = 5.0  # seconds between detection publishes to server
+DEFAULT_DETECTION_PUBLISH_INTERVAL = 2.0  # seconds between detection publishes to server
 
 # DUAL THRESHOLD STRATEGY (Config 7A: tested and optimized)
 DEFAULT_CONFIDENCE_THRESHOLD = 0.05  # Fallback/general threshold
@@ -126,7 +127,26 @@ async def create_peer_connection():
     # Log ICE connection state changes
     @peer_connection.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
-        logger.info(f"ICE connection state: {peer_connection.iceConnectionState}")
+        state = peer_connection.iceConnectionState
+        logger.info(f"ICE connection state: {state}")
+        
+        # ✅ Ensure AI detection starts AFTER ICE connection is established
+        if state == "connected" and video_track:
+            logger.info("🎯 ICE CONNECTED - AI detection should now be processing frames")
+            # Log detection worker status
+            if hasattr(video_track, 'detection_thread') and video_track.detection_thread:
+                is_alive = video_track.detection_thread.is_alive()
+                logger.info(f"🤖 AI detection worker thread status: {'RUNNING ✅' if is_alive else 'STOPPED ❌'}")
+                if not is_alive:
+                    logger.error("⚠️ AI detection worker thread is NOT running! Restarting...")
+                    # Restart detection thread
+                    video_track.detection_thread = threading.Thread(target=video_track._detection_worker, daemon=True)
+                    video_track.detection_thread.start()
+                    logger.info("✅ AI detection worker thread restarted")
+            else:
+                logger.warning("⚠️ Video track has no detection thread!")
+        elif state == "failed" or state == "disconnected":
+            logger.warning(f"ICE connection {state} - detection may stop")
     
     # Log ICE gathering state changes
     @peer_connection.on("icegatheringstatechange")
