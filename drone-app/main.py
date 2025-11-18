@@ -666,10 +666,12 @@ async def webrtc_answer(data):
                                 sdp_mid = cand.get('sdpMid')
                                 sdp_mline_index = cand.get('sdpMLineIndex')
                                 
-                                if candidate_str and candidate_str.startswith('candidate:'):
-                                    rtc_cand = RTCIceCandidate.from_sdp(candidate_str.replace('candidate:', ''))
-                                    rtc_cand.sdpMid = sdp_mid
-                                    rtc_cand.sdpMLineIndex = sdp_mline_index
+                                if candidate_str:
+                                    rtc_cand = RTCIceCandidate(
+                                        sdp=candidate_str,
+                                        sdpMid=sdp_mid,
+                                        sdpMLineIndex=sdp_mline_index
+                                    )
                                     await peer_connection.addIceCandidate(rtc_cand)
                             else:
                                 # If it's already an RTCIceCandidate object, add it directly
@@ -814,20 +816,20 @@ async def webrtc_ice_candidate(data):
         try:
             # aiortc's addIceCandidate expects an RTCIceCandidate object
             if isinstance(candidate_payload, dict):
-                # Try to create RTCIceCandidate - handle both formats
                 candidate_str = candidate_payload.get('candidate')
                 sdp_mid = candidate_payload.get('sdpMid')
                 sdp_mline_index = candidate_payload.get('sdpMLineIndex')
                 
-                # aiortc RTCIceCandidate can be created from SDP string
-                if candidate_str and candidate_str.startswith('candidate:'):
-                    rtc_cand = RTCIceCandidate.from_sdp(candidate_str.replace('candidate:', ''))
-                    rtc_cand.sdpMid = sdp_mid
-                    rtc_cand.sdpMLineIndex = sdp_mline_index
+                # Create RTCIceCandidate from dict - aiortc expects sdp string as first param
+                if candidate_str:
+                    # RTCIceCandidate(sdp, sdpMid, sdpMLineIndex)
+                    rtc_cand = RTCIceCandidate(
+                        sdp=candidate_str,
+                        sdpMid=sdp_mid,
+                        sdpMLineIndex=sdp_mline_index
+                    )
                     await peer_connection.addIceCandidate(rtc_cand)
                     logger.debug('Added remote ICE candidate')
-                else:
-                    logger.debug(f'Skipping invalid candidate format: {candidate_str}')
             else:
                 # If it's already an RTCIceCandidate object, add it directly
                 await peer_connection.addIceCandidate(candidate_payload)

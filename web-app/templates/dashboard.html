@@ -856,7 +856,13 @@
 
     // Capture button handler
     captureButton.addEventListener('click', function() {
-        captureCurrentFrame();
+        const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
+        if (typeof captureImageForAnalysis === 'function') {
+            captureImageForAnalysis(deviceId);
+        } else {
+            console.error('captureImageForAnalysis function not found in main.js');
+            alert('Chức năng chụp ảnh chưa sẵn sàng');
+        }
     });
 
     // Fullscreen button handler
