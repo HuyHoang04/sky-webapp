@@ -809,21 +809,16 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # Try to create RTCIceCandidate - handle both formats
+            # aiortc's addIceCandidate expects an RTCIceCandidate object
+            # RTCIceCandidate constructor takes: candidate, sdpMid, sdpMLineIndex
             if isinstance(candidate_payload, dict):
-                candidate_str = candidate_payload.get('candidate')
-                sdp_mid = candidate_payload.get('sdpMid')
-                sdp_mline_index = candidate_payload.get('sdpMLineIndex')
-                
-                # aiortc RTCIceCandidate can be created from SDP string
-                if candidate_str and candidate_str.startswith('candidate:'):
-                    rtc_cand = RTCIceCandidate.from_sdp(candidate_str.replace('candidate:', ''))
-                    rtc_cand.sdpMid = sdp_mid
-                    rtc_cand.sdpMLineIndex = sdp_mline_index
-                    await peer_connection.addIceCandidate(rtc_cand)
-                    logger.debug('Added remote ICE candidate')
-                else:
-                    logger.debug(f'Skipping invalid candidate format: {candidate_str}')
+                rtc_cand = RTCIceCandidate(
+                    candidate=candidate_payload.get('candidate'),  # The ICE candidate string
+                    sdpMid=candidate_payload.get('sdpMid'),
+                    sdpMLineIndex=candidate_payload.get('sdpMLineIndex')
+                )
+                await peer_connection.addIceCandidate(rtc_cand)
+                logger.debug('Added remote ICE candidate')
             else:
                 # If it's already an RTCIceCandidate object, add it directly
                 await peer_connection.addIceCandidate(candidate_payload)
@@ -833,6 +828,7 @@ async def webrtc_ice_candidate(data):
             pending_remote_ice.append(candidate_payload)
     except Exception as e:
         logger.error(f"Error handling ICE candidate: {e}")
+
 
 
 async def health_check():
