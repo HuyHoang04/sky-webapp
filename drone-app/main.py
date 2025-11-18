@@ -664,18 +664,24 @@ async def webrtc_answer(data):
                         try:
                             # Parse ICE candidate using aiortc's candidate_from_sdp
                             if isinstance(cand, dict):
-                                candidate_str = cand.get('candidate', '')
-                                # Remove 'candidate:' prefix if present
-                                if candidate_str.startswith('candidate:'):
-                                    candidate_str = candidate_str[10:]
+                                candidate_data = cand.get('candidate', '')
                                 
-                                # Split string into tokens and parse SDP to create RTCIceCandidate
-                                if isinstance(candidate_str, str):
-                                    tokens = candidate_str.split()
-                                    ice_candidate = candidate_from_sdp(tokens)
-                                    ice_candidate.sdpMid = cand.get('sdpMid')
-                                    ice_candidate.sdpMLineIndex = cand.get('sdpMLineIndex')
-                                    await peer_connection.addIceCandidate(ice_candidate)
+                                # Handle both string and list formats
+                                if isinstance(candidate_data, str):
+                                    # Remove 'candidate:' prefix if present
+                                    if candidate_data.startswith('candidate:'):
+                                        candidate_data = candidate_data[10:]
+                                    tokens = candidate_data.split()
+                                elif isinstance(candidate_data, list):
+                                    tokens = candidate_data
+                                else:
+                                    continue
+                                
+                                # Parse SDP to create RTCIceCandidate
+                                ice_candidate = candidate_from_sdp(tokens)
+                                ice_candidate.sdpMid = cand.get('sdpMid')
+                                ice_candidate.sdpMLineIndex = cand.get('sdpMLineIndex')
+                                await peer_connection.addIceCandidate(ice_candidate)
                             else:
                                 await peer_connection.addIceCandidate(cand)
                         except Exception as e:
@@ -817,18 +823,25 @@ async def webrtc_ice_candidate(data):
         try:
             # Parse ICE candidate using aiortc's candidate_from_sdp
             if isinstance(candidate_payload, dict):
-                candidate_str = candidate_payload.get('candidate', '')
-                # Remove 'candidate:' prefix if present
-                if candidate_str.startswith('candidate:'):
-                    candidate_str = candidate_str[10:]  # Remove 'candidate:'
+                candidate_data = candidate_payload.get('candidate', '')
                 
-                # Split string into tokens and parse SDP to create RTCIceCandidate
-                if isinstance(candidate_str, str):
-                    tokens = candidate_str.split()
-                    ice_candidate = candidate_from_sdp(tokens)
-                    ice_candidate.sdpMid = candidate_payload.get('sdpMid')
-                    ice_candidate.sdpMLineIndex = candidate_payload.get('sdpMLineIndex')
-                    await peer_connection.addIceCandidate(ice_candidate)
+                # Handle both string and list formats
+                if isinstance(candidate_data, str):
+                    # Remove 'candidate:' prefix if present
+                    if candidate_data.startswith('candidate:'):
+                        candidate_data = candidate_data[10:]
+                    tokens = candidate_data.split()
+                elif isinstance(candidate_data, list):
+                    tokens = candidate_data
+                else:
+                    logger.error(f'Invalid candidate format: {type(candidate_data)}')
+                    return
+                
+                # Parse SDP to create RTCIceCandidate
+                ice_candidate = candidate_from_sdp(tokens)
+                ice_candidate.sdpMid = candidate_payload.get('sdpMid')
+                ice_candidate.sdpMLineIndex = candidate_payload.get('sdpMLineIndex')
+                await peer_connection.addIceCandidate(ice_candidate)
             else:
                 await peer_connection.addIceCandidate(candidate_payload)
             logger.debug('Added remote ICE candidate')
