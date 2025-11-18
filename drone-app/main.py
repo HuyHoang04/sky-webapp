@@ -824,6 +824,7 @@ async def webrtc_ice_candidate(data):
             # Parse ICE candidate using aiortc's candidate_from_sdp
             if isinstance(candidate_payload, dict):
                 candidate_data = candidate_payload.get('candidate', '')
+                logger.debug(f"Candidate data type: {type(candidate_data)}, value: {candidate_data}")
                 
                 # Handle both string and list formats
                 if isinstance(candidate_data, str):
@@ -837,6 +838,7 @@ async def webrtc_ice_candidate(data):
                     logger.error(f'Invalid candidate format: {type(candidate_data)}')
                     return
                 
+                logger.debug(f"Tokens for candidate_from_sdp: {tokens}")
                 # Parse SDP to create RTCIceCandidate
                 ice_candidate = candidate_from_sdp(tokens)
                 ice_candidate.sdpMid = candidate_payload.get('sdpMid')
