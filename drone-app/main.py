@@ -663,15 +663,12 @@ async def webrtc_answer(data):
                         try:
                             # Convert buffered candidate dict to RTCIceCandidate
                             if isinstance(cand, dict):
-                                candidate_str = cand.get('candidate')
-                                sdp_mid = cand.get('sdpMid')
-                                sdp_mline_index = cand.get('sdpMLineIndex')
-                                
-                                if candidate_str and candidate_str.startswith('candidate:'):
-                                    rtc_cand = RTCIceCandidate.from_sdp(candidate_str.replace('candidate:', ''))
-                                    rtc_cand.sdpMid = sdp_mid
-                                    rtc_cand.sdpMLineIndex = sdp_mline_index
-                                    await peer_connection.addIceCandidate(rtc_cand)
+                                rtc_cand = RTCIceCandidate(
+                                    candidate=cand.get('candidate'),  # The ICE candidate string
+                                    sdpMid=cand.get('sdpMid'),
+                                    sdpMLineIndex=cand.get('sdpMLineIndex')
+                                )
+                                await peer_connection.addIceCandidate(rtc_cand)
                             else:
                                 # If it's already an RTCIceCandidate object, add it directly
                                 await peer_connection.addIceCandidate(cand)
@@ -690,7 +687,6 @@ async def webrtc_answer(data):
         # Try to recover by restarting WebRTC
         await asyncio.sleep(1)
         await restart_webrtc()
-
 
 @sio.event
 async def capture_command(data):
