@@ -20,10 +20,6 @@ def mission_page():
     """Render mission management page"""
     return render_template('mission.html')
 
-# ============================================
-# MISSION API ENDPOINTS
-# ============================================
-
 @mission_blueprint.route('/api/missions', methods=['GET', 'POST'])
 def handle_missions():
     """Get all missions or create new mission"""

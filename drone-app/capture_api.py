@@ -75,6 +75,7 @@ async def start_capture_server(webcam, ort_session=None, host='0.0.0.0', port=80
     await site.start()
 
     logger.info(f"Capture API running on http://{host}:{port}/capture")
+    logger.info(f"  - GET /capture : Quick preview capture (for testing)")
 
     try:
         while True:

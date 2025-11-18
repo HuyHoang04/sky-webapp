@@ -155,6 +155,52 @@ function initDashboard(socket) {
                 });
             }
             
+            // Xử lý sự kiện nút chụp ảnh phân tích AI
+            const captureButton = document.getElementById('captureImage');
+            if (captureButton) {
+                let captureInterval = null;
+                let isContinuousCapture = false;
+                
+                captureButton.addEventListener('click', function() {
+                    // Single capture
+                    captureImageForAnalysis(defaultDeviceId);
+                });
+                
+                // Long press for continuous capture (hold for 2 seconds)
+                let pressTimer;
+                captureButton.addEventListener('mousedown', function() {
+                    pressTimer = setTimeout(function() {
+                        // Start continuous capture every 5 seconds
+                        isContinuousCapture = true;
+                        captureButton.classList.add('btn-warning');
+                        captureButton.classList.remove('btn-outline-light');
+                        
+                        // Show notification
+                        showNotification('📸 Chế độ chụp liên tục: mỗi 5 giây', 'info');
+                        
+                        captureInterval = setInterval(function() {
+                            captureImageForAnalysis(defaultDeviceId);
+                        }, 5000);
+                    }, 2000);
+                });
+                
+                captureButton.addEventListener('mouseup', function() {
+                    clearTimeout(pressTimer);
+                    if (isContinuousCapture) {
+                        // Stop continuous capture
+                        clearInterval(captureInterval);
+                        isContinuousCapture = false;
+                        captureButton.classList.remove('btn-warning');
+                        captureButton.classList.add('btn-outline-light');
+                        showNotification('🛑 Dừng chụp liên tục', 'info');
+                    }
+                });
+                
+                captureButton.addEventListener('mouseleave', function() {
+                    clearTimeout(pressTimer);
+                });
+            }
+            
             // Xử lý sự kiện chọn nguồn video
             document.querySelectorAll('#videoSourceList a').forEach(item => {
                 item.addEventListener('click', function(e) {
@@ -279,6 +325,100 @@ function initWebRTCPage(socket) {
             webrtcClient.start();
         }
     }
+}
+
+/**
+ * Chụp ảnh từ drone để phân tích AI (qua Socket.IO)
+ */
+function captureImageForAnalysis(deviceId) {
+    // Show loading state
+    const captureButton = document.getElementById('captureImage');
+    if (captureButton) {
+        captureButton.disabled = true;
+        captureButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang chụp...';
+    }
+    
+    console.log(`📸 Requesting capture from device: ${deviceId}`);
+    
+    // Emit capture request via Socket.IO (tận dụng socket đã có)
+    if (typeof io !== 'undefined') {
+        const socket = io();
+        
+        // Send capture request to server
+        socket.emit('capture_request', {
+            device_id: deviceId,
+            timestamp: new Date().toISOString()
+        });
+        
+        console.log('📸 Capture request sent via socket');
+        
+        // Listen for capture success
+        socket.once('capture_success', function(data) {
+            console.log('✅ Capture success:', data);
+            showNotification('✅ Ảnh đã được chụp và gửi phân tích AI!', 'success');
+            
+            // Restore button
+            if (captureButton) {
+                captureButton.disabled = false;
+                captureButton.innerHTML = '<i class="fas fa-camera"></i><span>Capture</span>';
+            }
+            
+            // Refresh detection page data
+            if (typeof refreshDetectionData === 'function') {
+                setTimeout(refreshDetectionData, 2000);
+            }
+        });
+        
+        // Listen for capture error
+        socket.once('capture_error', function(data) {
+            console.error('❌ Capture error:', data);
+            showNotification('❌ Lỗi chụp ảnh: ' + (data.error || 'Unknown error'), 'danger');
+            
+            // Restore button
+            if (captureButton) {
+                captureButton.disabled = false;
+                captureButton.innerHTML = '<i class="fas fa-camera"></i><span>Capture</span>';
+            }
+        });
+        
+        // Timeout fallback (10 seconds)
+        setTimeout(function() {
+            if (captureButton && captureButton.disabled) {
+                captureButton.disabled = false;
+                captureButton.innerHTML = '<i class="fas fa-camera"></i><span>Capture</span>';
+                showNotification('⏱️ Timeout - Vui lòng thử lại', 'warning');
+            }
+        }, 10000);
+        
+    } else {
+        console.error('Socket.IO not available');
+        showNotification('❌ Socket.IO không khả dụng', 'danger');
+        
+        if (captureButton) {
+            captureButton.disabled = false;
+            captureButton.innerHTML = '<i class="fas fa-camera"></i><span>Capture</span>';
+        }
+    }
+}
+
+/**
+ * Show notification toast
+ */
+function showNotification(message, type = 'info') {
+    // Simple notification using Bootstrap toast or alert
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+    alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(alertDiv);
+    
+    // Auto remove after 5 seconds
+    setTimeout(() => {
+        alertDiv.remove();
+    }, 5000);
 }
 
 /**

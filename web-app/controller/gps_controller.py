@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from flask_socketio import emit
+from flask_socketio import emit, join_room
 from model.gps_model import GPSData
 import logging
 from socket_instance import socketio
@@ -18,6 +18,22 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     logger.info(f"[GPS] Client disconnected - SID: {request.sid}")
+
+@socketio.on('device_register')
+def handle_device_register(data):
+    """Register device and join its room for targeted communication"""
+    try:
+        device_id = data.get('device_id')
+        if device_id:
+            join_room(device_id)
+            logger.info(f"[DEVICE] {device_id} registered and joined room")
+            emit('device_registered', {'device_id': device_id, 'status': 'success'})
+        else:
+            logger.warning(f"[DEVICE] Registration failed - no device_id")
+            emit('device_registered', {'status': 'error', 'message': 'Missing device_id'})
+    except Exception as e:
+        logger.error(f"[DEVICE] Error registering device: {e}")
+        emit('device_registered', {'status': 'error', 'message': str(e)})
 
 @socketio.on('gps_data')
 def handle_gps_data(data):

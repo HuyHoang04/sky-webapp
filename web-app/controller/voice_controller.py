@@ -17,14 +17,14 @@ voice_blueprint = Blueprint('voice', __name__)
 from controller.gps_controller import gps_data_store
 
 # AI Service URL (analytics-voice-server endpoint)
-AI_SERVICE_URL = os.getenv('AI_SERVICE_URL')
-AI_ANALYSIS_ENABLED = bool(AI_SERVICE_URL)
+AI_VOICE_SERVICE_URL = os.getenv('AI_VOICE_SERVICE_URL')
+AI_ANALYSIS_ENABLED = bool(AI_VOICE_SERVICE_URL)
 
 if not AI_ANALYSIS_ENABLED:
-    logger.warning("[VOICE] ⚠️  AI_SERVICE_URL not configured, AI analysis will be disabled")
-    logger.warning("[VOICE] Set AI_SERVICE_URL environment variable to enable AI transcription and analysis")
+    logger.warning("[VOICE] ⚠️  AI_VOICE_SERVICE_URL not configured, AI analysis will be disabled")
+    logger.warning("[VOICE] Set AI_VOICE_SERVICE_URL environment variable to enable AI transcription and analysis")
 else:
-    logger.info(f"[VOICE] AI analysis enabled, using service at: {AI_SERVICE_URL}")
+    logger.info(f"[VOICE] AI analysis enabled, using service at: {AI_VOICE_SERVICE_URL}")
 # ============================================
 # WEB ROUTES
 # ============================================
@@ -118,7 +118,7 @@ def handle_voice_records():
                 try:
                     with get_db() as db_bg:
                         service_bg = VoiceRecordService(db_bg)
-                        service_bg.trigger_ai_analysis(record_id, AI_SERVICE_URL)
+                        service_bg.trigger_ai_analysis(record_id, AI_VOICE_SERVICE_URL)
                 except Exception as e:
                     logger.error(f"[VOICE] Failed to trigger AI analysis: {str(e)}")
             else:
@@ -158,9 +158,9 @@ def handle_voice_records():
                 # 🔍 DEBUG LOG: Check first record with analysis
                 for record in records:
                     if record.analysis_items:
-                        logger.info(f"[VOICE API] 📤 Sending record {record.id} to frontend:")
-                        logger.info(f"[VOICE API]   - Intent: {record.analysis_intent}")
-                        logger.info(f"[VOICE API]   - Items: {record.analysis_items}")
+                        # logger.info(f"[VOICE API] - Sending record {record.id} to frontend:")
+                        # logger.info(f"[VOICE API]   - Intent: {record.analysis_intent}")
+                        # logger.info(f"[VOICE API]   - Items: {record.analysis_items}")
                         break
                 
                 return jsonify({

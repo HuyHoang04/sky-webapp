@@ -59,15 +59,61 @@ def analyze_items():
 
 @detection_blueprint.route('/api/detections', methods=['GET'])
 def get_detections():
-    # TODO: Get detections from database
-    return jsonify([]) # SAI -> Hiển thị hình ảnh từ cloudinary gửi về 
-
-# Đẩy ảnh cho server có AI -> đẩy cho cloudinary -> trả về ảnh đã bounding box cho frontend hiển thị
+    """Get capture analysis records from database"""
+    try:
+        from database import get_db
+        from services.capture_service import CaptureRecordService
+        
+        # Optional filters
+        limit = int(request.args.get('limit', 50))
+        unresolved_only = request.args.get('unresolved', 'false').lower() == 'true'
+        
+        with get_db() as db:
+            service = CaptureRecordService(db)
+            records = service.get_all_records(limit=limit, unresolved_only=unresolved_only)
+            
+            return jsonify({
+                'status': 'success',
+                'count': len(records),
+                'detections': [record.to_dict() for record in records]
+            })
+            
+    except Exception as e:
+        logger.error(f"Error getting detections: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'detections': []
+        }), 500
 
 @detection_blueprint.route('/api/recordings', methods=['GET'])
 def get_recordings():
-    # TODO: Get recordings from database
-    return jsonify([])
+    """Get voice recordings from database"""
+    try:
+        from database import get_db
+        from services.voice_service import VoiceRecordService
+        
+        # Optional filters
+        limit = int(request.args.get('limit', 50))
+        unresolved_only = request.args.get('unresolved', 'false').lower() == 'true'
+        
+        with get_db() as db:
+            service = VoiceRecordService(db)
+            records = service.get_all_records(limit=limit, unresolved_only=unresolved_only)
+            
+            return jsonify({
+                'status': 'success',
+                'count': len(records),
+                'recordings': [record.to_dict() for record in records]
+            })
+            
+    except Exception as e:
+        logger.error(f"Error getting recordings: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'recordings': []
+        }), 500
 
 @detection_blueprint.route('/api/export', methods=['POST'])
 def export_results():

@@ -45,11 +45,13 @@
         border: 1px solid var(--gray-100);
         overflow: hidden;
         transition: all 0.3s ease;
+        position: relative;
     }
     
     .detection-card:hover {
         transform: translateY(-2px);
         border-color: var(--secondary-color);
+        box-shadow: 0 4px 8px rgba(0, 194, 255, 0.3);
     }
     
     .detection-image {
@@ -156,58 +158,8 @@
     </div>
 
     <div class="row">
-        <!-- Item Checklist -->
-        <div class="col-lg-3 mb-4">
-            <div class="card h-100">
-                <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-clipboard-list"></i> Item Checklist</h5>
-                        <div class="btn-group btn-group-sm">
-                            <button class="btn btn-outline-light" onclick="selectAllItems()">
-                                <i class="fas fa-check-double"></i>
-                            </button>
-                            <button class="btn btn-outline-light" onclick="clearSelection()">
-                                <i class="fas fa-times"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                <div class="card-body checklist-container">
-                    <ul class="item-list" id="itemList">
-                        <li class="item-card selected">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="item1" checked>
-                                    <label class="form-check-label" for="item1">First Aid Kit</label>
-                                </div>
-                                <span class="badge bg-success">Required</span>
-                            </div>
-                        </li>
-                        <li class="item-card">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="item2">
-                                    <label class="form-check-label" for="item2">Life Vest</label>
-                                </div>
-                                <span class="badge bg-warning">Optional</span>
-                            </div>
-                        </li>
-                        <!-- More items will be added dynamically -->
-                    </ul>
-                </div>
-                <div class="card-footer">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <small class="text-muted">2 of 5 items selected</small>
-                        <button class="btn btn-primary btn-sm" onclick="analyzeItems()">
-                            <i class="fas fa-search me-1"></i>Analyze
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- Detection Results -->
-        <div class="col-lg-5 mb-4">
+        <div class="col-lg-8 mb-4">
             <div class="card h-100">
                 <div class="card-header">
                     <div class="d-flex justify-content-between align-items-center">
@@ -224,19 +176,13 @@
                 </div>
                 <div class="card-body">
                     <div class="detection-grid">
-                        <div class="detection-card">
-                            <img src="path/to/detection1.jpg" class="detection-image" alt="Detection 1">
-                            <div class="detection-info">
-                                <div class="detection-confidence">
-                                    <i class="fas fa-chart-line text-success me-1"></i>95%
-                                </div>
-                                <h6 class="mb-2">First Aid Kit</h6>
-                                <div class="detection-meta">
-                                    <i class="far fa-clock me-1"></i>2 minutes ago
-                                </div>
+                        <!-- Detection results will be loaded dynamically from API -->
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
                             </div>
+                            <p class="mt-2 text-muted">Đang tải dữ liệu phát hiện...</p>
                         </div>
-                        <!-- More detection results will be added dynamically -->
                     </div>
                 </div>
             </div>
@@ -255,26 +201,13 @@
                 </div>
                 <div class="card-body">
                     <ul class="recording-list">
-                        <li class="recording-item">
-                            <div class="recording-header">
-                                <h6 class="mb-0">Recording #127</h6>
-                                <small class="text-muted">10:30 AM</small>
+                        <!-- Voice recordings will be loaded dynamically from API -->
+                        <li class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
                             </div>
-                            <div class="recording-meta mb-2">
-                                <i class="far fa-clock me-1"></i>Duration: 2:30
-                                <i class="fas fa-tag ms-3 me-1"></i>5 detections
-                            </div>
-                            <div class="detection-tags">
-                                <span class="detection-tag high-conf">First Aid Kit (95%)</span>
-                                <span class="detection-tag med-conf">Life Vest (75%)</span>
-                            </div>
-                            <div class="mt-2">
-                                <button class="btn btn-sm btn-outline-light">
-                                    <i class="fas fa-play me-1"></i>Play
-                                </button>
-                            </div>
+                            <p class="mt-2 text-muted">Đang tải dữ liệu ghi âm...</p>
                         </li>
-                        <!-- More recordings will be added dynamically -->
                     </ul>
                 </div>
             </div>
@@ -350,16 +283,7 @@ function updateItemCount() {
     document.querySelector('.card-footer small').textContent = `${selected} of ${total} items selected`;
 }
 
-// Initialize checkboxes
-document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('.item-list input[type="checkbox"]').forEach(checkbox => {
-        checkbox.addEventListener('change', function() {
-            this.closest('.item-card').classList.toggle('selected', this.checked);
-            updateItemCount();
-        });
-    });
-    updateItemCount();
-});
+// Initialize checkboxes (removed duplicate DOMContentLoaded - will be called in main init below)
 
 function saveNewItem() {
     const itemName = document.getElementById('itemName').value;
@@ -396,9 +320,271 @@ function analyzeItems() {
 }
 
 function refreshData() {
-    // TODO: Refresh detection results and recordings
-    console.log('Refreshing data...');
+    console.log('🔄 Refreshing detection data...');
+    
+    // Show refresh animation on button if exists
+    const refreshBtn = document.querySelector('button[onclick="refreshData()"]');
+    if (refreshBtn) {
+        const icon = refreshBtn.querySelector('i');
+        if (icon) {
+            icon.classList.add('fa-spin');
+            setTimeout(() => icon.classList.remove('fa-spin'), 1000);
+        }
+    }
+    
+    loadDetections();
+    loadRecordings();
 }
+
+// Also make it available globally for dashboard
+window.refreshDetectionData = refreshData;
+
+function loadDetections() {
+    console.log('📸 Loading detections from API...');
+    
+    const grid = document.querySelector('.detection-grid');
+    if (grid) {
+        grid.innerHTML = `
+            <div class="col-12 text-center py-5">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-2 text-muted">Đang tải dữ liệu phát hiện...</p>
+            </div>
+        `;
+    }
+    
+    fetch('/api/detections?limit=20')
+        .then(response => {
+            console.log('📸 Detection API response:', response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log('📸 Detection data:', data);
+            if (data.status === 'success' && data.detections) {
+                console.log(`📸 Found ${data.detections.length} detections`);
+                renderDetections(data.detections);
+            } else {
+                console.warn('📸 No detections in response');
+                renderDetections([]);
+            }
+        })
+        .catch(error => {
+            console.error('❌ Error loading detections:', error);
+            if (grid) {
+                grid.innerHTML = `
+                    <div class="col-12 text-center py-5">
+                        <i class="fas fa-exclamation-triangle fa-3x text-danger mb-3"></i>
+                        <p class="text-danger">Lỗi tải dữ liệu phát hiện</p>
+                        <p class="text-muted small">${error.message}</p>
+                        <button class="btn btn-sm btn-primary" onclick="loadDetections()">
+                            <i class="fas fa-sync me-1"></i>Thử lại
+                        </button>
+                    </div>
+                `;
+            }
+        });
+}
+
+function renderDetections(detections) {
+    const grid = document.querySelector('.detection-grid');
+    if (!grid) return;
+    
+    grid.innerHTML = '';
+    
+    if (!detections || detections.length === 0) {
+        grid.innerHTML = `
+            <div class="col-12 text-center py-5">
+                <i class="fas fa-camera fa-3x text-muted mb-3"></i>
+                <p class="text-muted">Chưa có dữ liệu phát hiện</p>
+                <p class="text-muted small">Chụp ảnh từ dashboard để bắt đầu phân tích AI</p>
+            </div>
+        `;
+        return;
+    }
+    
+    detections.forEach(detection => {
+        const card = document.createElement('div');
+        card.className = 'detection-card';
+        
+        const imageUrl = detection.analyzed_image_url || detection.image_url;
+        const totalPersons = detection.total_person_count || 0;
+        const earthPersons = detection.earth_person_count || 0;
+        const seaPersons = detection.sea_person_count || 0;
+        const status = detection.analysis_status;
+        const priority = detection.priority || 'medium';
+        
+        let statusBadge = '';
+        if (status === 'completed') {
+            statusBadge = `<span class="badge bg-success">✓ Phân tích xong</span>`;
+        } else if (status === 'processing') {
+            statusBadge = `<span class="badge bg-warning">⏳ Đang xử lý</span>`;
+        } else if (status === 'failed') {
+            statusBadge = `<span class="badge bg-danger">✗ Lỗi</span>`;
+        } else {
+            statusBadge = `<span class="badge bg-secondary">⏸ Chờ xử lý</span>`;
+        }
+        
+        card.innerHTML = `
+            <img src="${imageUrl}" class="detection-image" alt="Capture ${detection.id}" 
+                 onerror="this.src='https://via.placeholder.com/320x180?text=No+Image'">
+            <div class="detection-info">
+                <div class="detection-confidence">
+                    <i class="fas fa-users text-info me-1"></i>${totalPersons} người
+                </div>
+                <h6 class="mb-2">Capture #${detection.id}</h6>
+                <div class="detection-meta mb-2">
+                    <div><i class="fas fa-user-friends text-success me-1"></i>Đất: ${earthPersons}</div>
+                    <div><i class="fas fa-water text-primary me-1"></i>Biển: ${seaPersons}</div>
+                </div>
+                <div class="detection-meta mb-2">
+                    ${statusBadge}
+                    <span class="badge bg-${priority === 'critical' ? 'danger' : priority === 'high' ? 'warning' : 'secondary'}">${priority}</span>
+                </div>
+                <div class="detection-meta">
+                    <i class="far fa-clock me-1"></i>${formatTimeAgo(detection.captured_at)}
+                </div>
+                <div class="detection-meta">
+                    <i class="fas fa-map-marker-alt me-1"></i>${detection.latitude.toFixed(4)}, ${detection.longitude.toFixed(4)}
+                </div>
+            </div>
+        `;
+        
+        grid.appendChild(card);
+    });
+}
+
+function loadRecordings() {
+    console.log('🎤 Loading recordings from API...');
+    
+    const list = document.querySelector('.recording-list');
+    if (list) {
+        list.innerHTML = `
+            <li class="text-center py-5">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-2 text-muted">Đang tải dữ liệu ghi âm...</p>
+            </li>
+        `;
+    }
+    
+    fetch('/api/recordings?limit=10')
+        .then(response => {
+            console.log('🎤 Recordings API response:', response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log('🎤 Recordings data:', data);
+            if (data.status === 'success' && data.recordings) {
+                console.log(`🎤 Found ${data.recordings.length} recordings`);
+                renderRecordings(data.recordings);
+            } else {
+                console.warn('🎤 No recordings in response');
+                renderRecordings([]);
+            }
+        })
+        .catch(error => {
+            console.error('❌ Error loading recordings:', error);
+            if (list) {
+                list.innerHTML = `
+                    <li class="text-center py-5">
+                        <i class="fas fa-exclamation-triangle fa-3x text-danger mb-3"></i>
+                        <p class="text-danger">Lỗi tải dữ liệu ghi âm</p>
+                        <p class="text-muted small">${error.message}</p>
+                        <button class="btn btn-sm btn-primary" onclick="loadRecordings()">
+                            <i class="fas fa-sync me-1"></i>Thử lại
+                        </button>
+                    </li>
+                `;
+            }
+        });
+}
+
+function renderRecordings(recordings) {
+    const list = document.querySelector('.recording-list');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    
+    if (!recordings || recordings.length === 0) {
+        list.innerHTML = `
+            <li class="text-center py-5">
+                <i class="fas fa-microphone fa-3x text-muted mb-3"></i>
+                <p class="text-muted">Chưa có dữ liệu ghi âm</p>
+                <p class="text-muted small">Ghi âm từ thiết bị cứu hộ sẽ xuất hiện ở đây</p>
+            </li>
+        `;
+        return;
+    }
+    
+    recordings.forEach(recording => {
+        const item = document.createElement('li');
+        item.className = 'recording-item';
+        
+        const intent = recording.analysis_intent || 'Chưa phân tích';
+        const status = recording.analysis_status;
+        const transcription = recording.transcribed_text || 'Chưa có văn bản';
+        
+        let statusBadge = '';
+        if (status === 'completed') {
+            statusBadge = `<span class="badge bg-success">✓</span>`;
+        } else if (status === 'processing') {
+            statusBadge = `<span class="badge bg-warning">⏳</span>`;
+        } else {
+            statusBadge = `<span class="badge bg-secondary">⏸</span>`;
+        }
+        
+        item.innerHTML = `
+            <div class="recording-header">
+                <div>
+                    <h6 class="mb-1">Record #${recording.id} ${statusBadge}</h6>
+                    <small class="text-muted">${formatTimeAgo(recording.recorded_at)}</small>
+                </div>
+                <div>
+                    <span class="badge bg-info">${intent}</span>
+                </div>
+            </div>
+            <div class="mt-2">
+                <audio controls style="width: 100%; height: 30px;">
+                    <source src="${recording.audio_url}" type="audio/mpeg">
+                </audio>
+            </div>
+            <div class="mt-2">
+                <small class="text-muted">"${transcription.substring(0, 100)}${transcription.length > 100 ? '...' : ''}"</small>
+            </div>
+        `;
+        
+        list.appendChild(item);
+    });
+}
+
+function formatTimeAgo(timestamp) {
+    if (!timestamp) return 'N/A';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const seconds = Math.floor((now - date) / 1000);
+    
+    if (seconds < 60) return `${seconds}s trước`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m trước`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h trước`;
+    return `${Math.floor(seconds / 86400)}d trước`;
+}
+
+// Auto refresh every 10 seconds
+setInterval(refreshData, 10000);
+
+// Initialize page on load
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize checkboxes
+    document.querySelectorAll('.item-list input[type="checkbox"]').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            this.closest('.item-card').classList.toggle('selected', this.checked);
+            updateItemCount();
+        });
+    });
+    updateItemCount();
+    
+    // Load detection and recording data
+    console.log('🔄 Detection page loaded, fetching data...');
+    refreshData();
+});
 
 function exportResults() {
     // TODO: Export analysis results

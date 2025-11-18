@@ -37,9 +37,8 @@ socketio.init_app(app, cors_allowed_origins="*")
 # Initialize database
 # Only log startup banner once (skip on Flask reloader parent process in debug mode)
 if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.config['DEBUG']:
-    logger.info("=" * 60)
-    logger.info("SkyAid Drone WebApp Starting...")
-    logger.info("=" * 60)
+    logger.info("WebApp Starting...")
+
 
 db_initialized = False
 try:
@@ -50,17 +49,17 @@ try:
     db_initialized = check_db_connection()
     
     if db_initialized:
-        logger.info("✓ Database initialized successfully")
+        logger.info(" Database initialized successfully")
     else:
-        logger.warning("⚠ Database connection could not be verified")
+        logger.warning(" Database connection could not be verified")
         logger.warning("  Application will run but database features may not work")
         logger.warning("  Please check your DATABASE_URL in .env file")
         
 except Exception as e:
     # Only log error if database truly failed
     if not db_initialized:
-        logger.error(f"✗ Database initialization failed: {e}")
-        logger.warning("⚠ Application will start but database features will not work")
+        logger.error(f" Database initialization failed: {e}")
+        logger.warning(" Application will start but database features will not work")
 
 # Register blueprints
 if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.config['DEBUG']:
@@ -83,8 +82,7 @@ app.register_blueprint(detection_blueprint)
 app.register_blueprint(voice_blueprint)
 
 if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.config['DEBUG']:
-    logger.info("✓ All blueprints registered")
-    logger.info("=" * 60)
+    logger.info(" All blueprints registered")
 
 # Health check endpoint
 @app.route('/health')

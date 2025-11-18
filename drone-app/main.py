@@ -29,9 +29,11 @@ from aiortc import (
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from av import VideoFrame
 from camera_utils import setup_camera, load_onnx_model
-from capture_api import start_capture_server
 from gps_utils import read_gps, gps_task
 from video_stream import ObjectDetectionStreamTrack
+import io
+import cloudinary
+import cloudinary.uploader
 
 # Configure logging
 logging.basicConfig(
@@ -86,7 +88,6 @@ running = True
 ort_session = None
 reconnect_task = None
 video_track = None
-capture_server_task = None
 pending_remote_ice = []
 user_stopped = False
 detection_task = None
@@ -520,7 +521,10 @@ async def connect():
     """Handle Socket.IO connection"""
     logger.info(f"Connected to server as {device_id}")
     
-    # Register device
+    # Register device for room-based communication (for capture commands)
+    await sio.emit("device_register", {"device_id": device_id})
+    
+    # Register video device
     await sio.emit(
         "register_video_device",
         {
@@ -685,6 +689,108 @@ async def webrtc_answer(data):
 
 
 @sio.event
+async def capture_command(data):
+    """Handle capture command from server (via Socket.IO)"""
+    try:
+        device_id_from_server = data.get('device_id')
+        timestamp = data.get('timestamp', datetime.now().isoformat())
+        
+        logger.info(f"📸 Received capture command for device: {device_id_from_server}")
+        
+        # Verify device ID matches
+        if device_id_from_server != device_id:
+            logger.warning(f"Device ID mismatch: {device_id_from_server} != {device_id}")
+            return
+        
+        # Capture image from camera
+        if not webcam:
+            logger.error("Camera not available for capture")
+            await sio.emit('capture_result', {
+                'device_id': device_id,
+                'success': False,
+                'error': 'Camera not available'
+            })
+            return
+        
+        # Get high-quality frame from camera
+        frame = webcam.get_frame()
+        if frame is None:
+            logger.error("Failed to capture frame from camera")
+            await sio.emit('capture_result', {
+                'device_id': device_id,
+                'success': False,
+                'error': 'Failed to capture frame'
+            })
+            return
+        
+        logger.info("📸 Frame captured successfully")
+        
+        # Encode to JPEG with high quality
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]
+        _, buffer = cv2.imencode('.jpg', frame, encode_param)
+        img_bytes = buffer.tobytes()
+        
+        # Read GPS data if available
+        gps_data = None
+        if latest_gps:
+            gps_data = {
+                'latitude': latest_gps.get('latitude'),
+                'longitude': latest_gps.get('longitude'),
+                'altitude': latest_gps.get('altitude'),
+                'speed': latest_gps.get('speed')
+            }
+            logger.info(f"📍 GPS data: {gps_data}")
+        
+        # Upload to Cloudinary
+        try:
+            # Cloudinary config (same as capture_api.py)
+            cloudinary.config(
+                cloud_name="dpvt5pxln",
+                api_key="756332772729963",
+                api_secret="T0xGIeRvdAzDVH1MqFy6iBIeVFg",
+                secure=True
+            )
+            
+            logger.info("☁️ Uploading to Cloudinary...")
+            result = cloudinary.uploader.upload(
+                io.BytesIO(img_bytes),
+                folder="drone_captures",
+                resource_type="image",
+                public_id=f"capture_{device_id}_{int(time.time())}"
+            )
+            
+            image_url = result.get('secure_url')
+            logger.info(f"✅ Image uploaded: {image_url}")
+            
+            # Send result back to server via Socket.IO
+            await sio.emit('capture_result', {
+                'device_id': device_id,
+                'success': True,
+                'image_url': image_url,
+                'gps_data': gps_data,
+                'timestamp': timestamp
+            })
+            
+            logger.info("📤 Capture result sent to server")
+            
+        except Exception as upload_error:
+            logger.error(f"Failed to upload to Cloudinary: {upload_error}")
+            await sio.emit('capture_result', {
+                'device_id': device_id,
+                'success': False,
+                'error': f'Upload failed: {str(upload_error)}'
+            })
+            
+    except Exception as e:
+        logger.error(f"Error handling capture command: {e}")
+        await sio.emit('capture_result', {
+            'device_id': device_id,
+            'success': False,
+            'error': str(e)
+        })
+
+
+@sio.event
 async def webrtc_ice_candidate(data):
     """Handle ICE candidate from server"""
     try:
@@ -773,16 +879,8 @@ async def cleanup():
         webcam.release()
         webcam = None
 
-    # Stop capture API server if running
-    global capture_server_task, detection_task
-    if capture_server_task and not capture_server_task.done():
-        capture_server_task.cancel()
-        try:
-            await capture_server_task
-        except Exception:
-            pass
-    
     # Stop detection task
+    global detection_task
     if detection_task and not detection_task.done():
         detection_task.cancel()
         try:
@@ -846,12 +944,6 @@ async def main():
                 return
     
     logger.info("Camera setup successful")
-    # Start capture API server so other services can request frames/detections
-    global capture_server_task
-    try:
-        capture_server_task = asyncio.create_task(start_capture_server(webcam, ort_session, host='0.0.0.0', port=8080))
-    except Exception as e:
-        logger.error(f"Failed to start capture server: {e}")
     
     # Start health check task
     health_check_task = asyncio.create_task(health_check())
