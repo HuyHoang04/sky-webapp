@@ -661,8 +661,16 @@ async def webrtc_answer(data):
                 logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
-                            # aiortc accepts dict directly: {"candidate": "...", "sdpMid": "...", "sdpMLineIndex": N}
-                            await peer_connection.addIceCandidate(cand)
+                            # Convert dict to object with attributes
+                            if isinstance(cand, dict):
+                                cand_obj = SimpleNamespace(
+                                    candidate=cand.get('candidate'),
+                                    sdpMid=cand.get('sdpMid'),
+                                    sdpMLineIndex=cand.get('sdpMLineIndex')
+                                )
+                                await peer_connection.addIceCandidate(cand_obj)
+                            else:
+                                await peer_connection.addIceCandidate(cand)
                         except Exception as e:
                             logger.error(f"Failed to add buffered ICE candidate: {e}")
                 pending_remote_ice = []
@@ -800,8 +808,17 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # aiortc's addIceCandidate accepts dict: {"candidate": "...", "sdpMid": "...", "sdpMLineIndex": N}
-            await peer_connection.addIceCandidate(candidate_payload)
+            # aiortc needs object with attributes, not dict
+            # Convert dict to SimpleNamespace object
+            if isinstance(candidate_payload, dict):
+                cand_obj = SimpleNamespace(
+                    candidate=candidate_payload.get('candidate'),
+                    sdpMid=candidate_payload.get('sdpMid'),
+                    sdpMLineIndex=candidate_payload.get('sdpMLineIndex')
+                )
+                await peer_connection.addIceCandidate(cand_obj)
+            else:
+                await peer_connection.addIceCandidate(candidate_payload)
             logger.debug('Added remote ICE candidate')
         except Exception as e:
             logger.error(f'Failed to add ICE candidate immediately: {e}. Buffering candidate.')
