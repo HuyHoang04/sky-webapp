@@ -27,6 +27,7 @@ from aiortc import (
     RTCSessionDescription,
     RTCIceCandidate,
 )
+from aiortc.sdp import candidate_from_sdp
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from av import VideoFrame
 from camera_utils import setup_camera, load_onnx_model
@@ -661,14 +662,18 @@ async def webrtc_answer(data):
                 logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
-                            # Convert dict to object with attributes
+                            # Parse ICE candidate using aiortc's candidate_from_sdp
                             if isinstance(cand, dict):
-                                cand_obj = SimpleNamespace(
-                                    candidate=cand.get('candidate'),
-                                    sdpMid=cand.get('sdpMid'),
-                                    sdpMLineIndex=cand.get('sdpMLineIndex')
-                                )
-                                await peer_connection.addIceCandidate(cand_obj)
+                                candidate_str = cand.get('candidate', '')
+                                # Remove 'candidate:' prefix if present
+                                if candidate_str.startswith('candidate:'):
+                                    candidate_str = candidate_str[10:]
+                                
+                                # Parse SDP to create RTCIceCandidate
+                                ice_candidate = candidate_from_sdp(candidate_str.split())
+                                ice_candidate.sdpMid = cand.get('sdpMid')
+                                ice_candidate.sdpMLineIndex = cand.get('sdpMLineIndex')
+                                await peer_connection.addIceCandidate(ice_candidate)
                             else:
                                 await peer_connection.addIceCandidate(cand)
                         except Exception as e:
@@ -808,15 +813,18 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # aiortc needs object with attributes, not dict
-            # Convert dict to SimpleNamespace object
+            # Parse ICE candidate using aiortc's candidate_from_sdp
             if isinstance(candidate_payload, dict):
-                cand_obj = SimpleNamespace(
-                    candidate=candidate_payload.get('candidate'),
-                    sdpMid=candidate_payload.get('sdpMid'),
-                    sdpMLineIndex=candidate_payload.get('sdpMLineIndex')
-                )
-                await peer_connection.addIceCandidate(cand_obj)
+                candidate_str = candidate_payload.get('candidate', '')
+                # Remove 'candidate:' prefix if present
+                if candidate_str.startswith('candidate:'):
+                    candidate_str = candidate_str[10:]  # Remove 'candidate:'
+                
+                # Parse SDP to create RTCIceCandidate
+                ice_candidate = candidate_from_sdp(candidate_str.split())
+                ice_candidate.sdpMid = candidate_payload.get('sdpMid')
+                ice_candidate.sdpMLineIndex = candidate_payload.get('sdpMLineIndex')
+                await peer_connection.addIceCandidate(ice_candidate)
             else:
                 await peer_connection.addIceCandidate(candidate_payload)
             logger.debug('Added remote ICE candidate')
