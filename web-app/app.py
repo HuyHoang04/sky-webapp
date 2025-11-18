@@ -74,12 +74,14 @@ from controller.gps_controller import gps_blueprint
 from controller.mission_controller import mission_blueprint
 from controller.detection_controller import detection_blueprint
 from controller.voice_controller import voice_blueprint
+from controller.capture_controller import capture_blueprint
 
 app.register_blueprint(video_blueprint)
 app.register_blueprint(gps_blueprint)
 app.register_blueprint(mission_blueprint)
 app.register_blueprint(detection_blueprint)
 app.register_blueprint(voice_blueprint)
+app.register_blueprint(capture_blueprint)
 
 if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.config['DEBUG']:
     logger.info(" All blueprints registered")

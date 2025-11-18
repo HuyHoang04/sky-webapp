@@ -393,7 +393,9 @@
                     e.preventDefault();
                     const deviceId = this.getAttribute('data-device-id');
                     const deviceName = this.textContent;
-                    document.getElementById('videoSourceDropdown').textContent = deviceName;
+                    const dropdown = document.getElementById('videoSourceDropdown');
+                    dropdown.textContent = deviceName;
+                    dropdown.setAttribute('data-device-id', deviceId); // Set device ID for capture
                     
                     // Dừng stream hiện tại nếu có
                     if (peerConnection) {
