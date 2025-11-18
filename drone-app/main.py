@@ -13,6 +13,7 @@ import time
 import uuid
 import threading
 from datetime import datetime
+from types import SimpleNamespace
 import nest_asyncio
 
 import cv2
@@ -25,6 +26,7 @@ from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
     RTCIceCandidate,
+    candidate_from_sdp,
 )
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from av import VideoFrame
@@ -660,9 +662,17 @@ async def webrtc_answer(data):
                 logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
-                            # aiortc's addIceCandidate accepts the candidate dict directly
-                            # No need to construct RTCIceCandidate manually
-                            await peer_connection.addIceCandidate(cand)
+                            # Convert dict to RTCIceCandidate using candidate_from_sdp
+                            if isinstance(cand, dict):
+                                candidate_sdp = cand.get('candidate')
+                                if candidate_sdp:
+                                    # Parse the SDP string to create RTCIceCandidate
+                                    ice_candidate = candidate_from_sdp(candidate_sdp)
+                                    ice_candidate.sdpMid = cand.get('sdpMid')
+                                    ice_candidate.sdpMLineIndex = cand.get('sdpMLineIndex')
+                                    await peer_connection.addIceCandidate(ice_candidate)
+                            else:
+                                await peer_connection.addIceCandidate(cand)
                         except Exception as e:
                             logger.error(f"Failed to add buffered ICE candidate: {e}")
                 pending_remote_ice = []
@@ -801,10 +811,19 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # aiortc's addIceCandidate accepts the candidate dict directly
-            # Dict format: {"candidate": "...", "sdpMid": "...", "sdpMLineIndex": ...}
-            await peer_connection.addIceCandidate(candidate_payload)
-            logger.debug('Added remote ICE candidate')
+            # Convert dict to RTCIceCandidate using candidate_from_sdp
+            if isinstance(candidate_payload, dict):
+                candidate_sdp = candidate_payload.get('candidate')
+                if candidate_sdp:
+                    # Parse the SDP string to create RTCIceCandidate
+                    ice_candidate = candidate_from_sdp(candidate_sdp)
+                    ice_candidate.sdpMid = candidate_payload.get('sdpMid')
+                    ice_candidate.sdpMLineIndex = candidate_payload.get('sdpMLineIndex')
+                    await peer_connection.addIceCandidate(ice_candidate)
+                    logger.debug('Added remote ICE candidate')
+            else:
+                await peer_connection.addIceCandidate(candidate_payload)
+                logger.debug('Added remote ICE candidate (direct)')
         except Exception as e:
             logger.error(f'Failed to add ICE candidate immediately: {e}. Buffering candidate.')
             pending_remote_ice.append(candidate_payload)
