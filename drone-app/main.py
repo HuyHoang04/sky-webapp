@@ -669,11 +669,13 @@ async def webrtc_answer(data):
                                 if candidate_str.startswith('candidate:'):
                                     candidate_str = candidate_str[10:]
                                 
-                                # Parse SDP to create RTCIceCandidate
-                                ice_candidate = candidate_from_sdp(candidate_str.split())
-                                ice_candidate.sdpMid = cand.get('sdpMid')
-                                ice_candidate.sdpMLineIndex = cand.get('sdpMLineIndex')
-                                await peer_connection.addIceCandidate(ice_candidate)
+                                # Split string into tokens and parse SDP to create RTCIceCandidate
+                                if isinstance(candidate_str, str):
+                                    tokens = candidate_str.split()
+                                    ice_candidate = candidate_from_sdp(tokens)
+                                    ice_candidate.sdpMid = cand.get('sdpMid')
+                                    ice_candidate.sdpMLineIndex = cand.get('sdpMLineIndex')
+                                    await peer_connection.addIceCandidate(ice_candidate)
                             else:
                                 await peer_connection.addIceCandidate(cand)
                         except Exception as e:
@@ -820,11 +822,13 @@ async def webrtc_ice_candidate(data):
                 if candidate_str.startswith('candidate:'):
                     candidate_str = candidate_str[10:]  # Remove 'candidate:'
                 
-                # Parse SDP to create RTCIceCandidate
-                ice_candidate = candidate_from_sdp(candidate_str.split())
-                ice_candidate.sdpMid = candidate_payload.get('sdpMid')
-                ice_candidate.sdpMLineIndex = candidate_payload.get('sdpMLineIndex')
-                await peer_connection.addIceCandidate(ice_candidate)
+                # Split string into tokens and parse SDP to create RTCIceCandidate
+                if isinstance(candidate_str, str):
+                    tokens = candidate_str.split()
+                    ice_candidate = candidate_from_sdp(tokens)
+                    ice_candidate.sdpMid = candidate_payload.get('sdpMid')
+                    ice_candidate.sdpMLineIndex = candidate_payload.get('sdpMLineIndex')
+                    await peer_connection.addIceCandidate(ice_candidate)
             else:
                 await peer_connection.addIceCandidate(candidate_payload)
             logger.debug('Added remote ICE candidate')
