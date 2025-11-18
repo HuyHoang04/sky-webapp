@@ -26,7 +26,6 @@ from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
     RTCIceCandidate,
-    candidate_from_sdp,
 )
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from av import VideoFrame
@@ -662,16 +661,19 @@ async def webrtc_answer(data):
                 logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
-                            # Convert dict to RTCIceCandidate using candidate_from_sdp
+                            # Convert buffered candidate dict to RTCIceCandidate
                             if isinstance(cand, dict):
-                                candidate_sdp = cand.get('candidate')
-                                if candidate_sdp:
-                                    # Parse the SDP string to create RTCIceCandidate
-                                    ice_candidate = candidate_from_sdp(candidate_sdp)
-                                    ice_candidate.sdpMid = cand.get('sdpMid')
-                                    ice_candidate.sdpMLineIndex = cand.get('sdpMLineIndex')
-                                    await peer_connection.addIceCandidate(ice_candidate)
+                                candidate_str = cand.get('candidate')
+                                sdp_mid = cand.get('sdpMid')
+                                sdp_mline_index = cand.get('sdpMLineIndex')
+                                
+                                if candidate_str and candidate_str.startswith('candidate:'):
+                                    rtc_cand = RTCIceCandidate.from_sdp(candidate_str.replace('candidate:', ''))
+                                    rtc_cand.sdpMid = sdp_mid
+                                    rtc_cand.sdpMLineIndex = sdp_mline_index
+                                    await peer_connection.addIceCandidate(rtc_cand)
                             else:
+                                # If it's already an RTCIceCandidate object, add it directly
                                 await peer_connection.addIceCandidate(cand)
                         except Exception as e:
                             logger.error(f"Failed to add buffered ICE candidate: {e}")
@@ -811,17 +813,23 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # Convert dict to RTCIceCandidate using candidate_from_sdp
+            # Try to create RTCIceCandidate - handle both formats
             if isinstance(candidate_payload, dict):
-                candidate_sdp = candidate_payload.get('candidate')
-                if candidate_sdp:
-                    # Parse the SDP string to create RTCIceCandidate
-                    ice_candidate = candidate_from_sdp(candidate_sdp)
-                    ice_candidate.sdpMid = candidate_payload.get('sdpMid')
-                    ice_candidate.sdpMLineIndex = candidate_payload.get('sdpMLineIndex')
-                    await peer_connection.addIceCandidate(ice_candidate)
+                candidate_str = candidate_payload.get('candidate')
+                sdp_mid = candidate_payload.get('sdpMid')
+                sdp_mline_index = candidate_payload.get('sdpMLineIndex')
+                
+                # aiortc RTCIceCandidate can be created from SDP string
+                if candidate_str and candidate_str.startswith('candidate:'):
+                    rtc_cand = RTCIceCandidate.from_sdp(candidate_str.replace('candidate:', ''))
+                    rtc_cand.sdpMid = sdp_mid
+                    rtc_cand.sdpMLineIndex = sdp_mline_index
+                    await peer_connection.addIceCandidate(rtc_cand)
                     logger.debug('Added remote ICE candidate')
+                else:
+                    logger.debug(f'Skipping invalid candidate format: {candidate_str}')
             else:
+                # If it's already an RTCIceCandidate object, add it directly
                 await peer_connection.addIceCandidate(candidate_payload)
                 logger.debug('Added remote ICE candidate (direct)')
         except Exception as e:
