@@ -1017,7 +1017,7 @@ async def main():
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH, help="Video width")
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help="Video height")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS, help="Video FPS")
-    parser.add_argument("--model", default="model_fp32.onnx", help="Path to ONNX model (use FP32, INT8 has zero confidence issue)")
+    parser.add_argument("--model", default="nano_model_fp32.onnx", help="Path to ONNX model (use FP32, INT8 has zero confidence issue)")
     parser.add_argument("--no-detection", action="store_true", help="Disable object detection")
 
     args = parser.parse_args()
