@@ -660,22 +660,9 @@ async def webrtc_answer(data):
                 logger.info(f"🔄 [DRONE] Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
-                            # Convert buffered candidate dict to RTCIceCandidate
-                            if isinstance(cand, dict):
-                                candidate_str = cand.get('candidate')
-                                sdp_mid = cand.get('sdpMid')
-                                sdp_mline_index = cand.get('sdpMLineIndex')
-                                
-                                # Use from_sdp() to parse candidate string
-                                rtc_cand = RTCIceCandidate.from_sdp(candidate_str)
-                                rtc_cand.sdpMid = sdp_mid
-                                rtc_cand.sdpMLineIndex = sdp_mline_index
-                                
-                                await peer_connection.addIceCandidate(rtc_cand)
-                                logger.info(f"✅ [DRONE] Added buffered ICE candidate")
-                            else:
-                                # If it's already an RTCIceCandidate object, add it directly
-                                await peer_connection.addIceCandidate(cand)
+                            # Pass dict or object directly to addIceCandidate
+                            await peer_connection.addIceCandidate(cand)
+                            logger.info(f"✅ [DRONE] Added buffered ICE candidate")
                         except Exception as e:
                             logger.error(f"❌ [DRONE] Failed to add buffered ICE candidate: {e}")
                 pending_remote_ice = []
@@ -719,34 +706,23 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # aiortc's RTCIceCandidate constructor takes positional args or from_sdp()
-            # Structure from server: {'candidate': 'candidate:...', 'sdpMid': '0', 'sdpMLineIndex': 0}
+            # aiortc's addIceCandidate can accept a dict directly
+            # Structure: {'candidate': 'candidate:...', 'sdpMid': '0', 'sdpMLineIndex': 0}
             if isinstance(candidate_payload, dict):
-                # Use from_sdp() static method which parses the candidate string
-                candidate_str = candidate_payload.get('candidate')
-                sdp_mid = candidate_payload.get('sdpMid')
-                sdp_mline_index = candidate_payload.get('sdpMLineIndex')
+                logger.info(f"🔍 [DRONE] Adding ICE candidate from dict")
                 
-                logger.info(f"🔍 [DRONE] Creating RTCIceCandidate with:")
-                logger.info(f"   - candidate: {candidate_str[:80]}...")
-                logger.info(f"   - sdpMid: {sdp_mid}")
-                logger.info(f"   - sdpMLineIndex: {sdp_mline_index}")
-                
-                # Parse candidate using from_sdp
-                rtc_cand = RTCIceCandidate.from_sdp(candidate_str)
-                rtc_cand.sdpMid = sdp_mid
-                rtc_cand.sdpMLineIndex = sdp_mline_index
-                
-                await peer_connection.addIceCandidate(rtc_cand)
+                # Try passing the dict directly - aiortc should handle it
+                await peer_connection.addIceCandidate(candidate_payload)
                 logger.info(f'✅ [DRONE] Added remote ICE candidate successfully')
             else:
                 # If it's already an RTCIceCandidate object, add it directly
                 await peer_connection.addIceCandidate(candidate_payload)
                 logger.info('✅ [DRONE] Added remote ICE candidate (direct)')
         except Exception as e:
-            logger.error(f'❌ [DRONE] Failed to add ICE candidate: {e}. Buffering candidate.')
+            logger.error(f'❌ [DRONE] Failed to add ICE candidate: {e}')
             import traceback
             logger.error(traceback.format_exc())
+            logger.info(f'🔄 [DRONE] Buffering candidate for later')
             pending_remote_ice.append(candidate_payload)
     except Exception as e:
         logger.error(f"Error handling ICE candidate: {e}")
