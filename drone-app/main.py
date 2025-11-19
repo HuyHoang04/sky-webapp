@@ -53,9 +53,9 @@ DEFAULT_HEIGHT = 720  # Video height in pixels
 DEFAULT_BITRATE = 3000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
                            # Lower = less bandwidth but lower quality
                            # Higher = better quality but more bandwidth
-DEFAULT_DETECTION_FRAME_INTERVAL = 5  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
+DEFAULT_DETECTION_FRAME_INTERVAL = 3  # AI detection runs every N frames (3 = ~10x/sec at 30fps)
                                         # Higher = less CPU usage but slower detection updates
-DEFAULT_DETECTION_PUBLISH_INTERVAL = 2.0  # seconds between detection publishes to server
+DEFAULT_DETECTION_PUBLISH_INTERVAL = 0.5  # seconds between detection publishes to server (faster updates)
 
 # DUAL THRESHOLD STRATEGY (Config 7A: tested and optimized)
 DEFAULT_CONFIDENCE_THRESHOLD = 0.05  # Fallback/general threshold
@@ -448,9 +448,12 @@ def parse_onnx_detections(outputs, input_size=(640, 640), orig_size=None, conf_t
     return final
 
 
-async def detection_publisher_loop(sio_client, webcam, ort_session, interval=DEFAULT_DETECTION_PUBLISH_INTERVAL):
-    """Background task: periodically run detection on a frame and emit to server via Socket.IO"""
-    logger.info("Starting detection publisher loop")
+async def detection_publisher_loop(sio_client, webcam, ort_session, video_track_ref=None, interval=DEFAULT_DETECTION_PUBLISH_INTERVAL):
+    """Background task: periodically emit detection results from video_track cache to server via Socket.IO
+    
+    This ensures the detection counts match exactly what's shown on the video stream.
+    """
+    logger.info("Starting detection publisher loop (using video_track cached detections)")
     try:
         while True:
             try:
@@ -458,36 +461,25 @@ async def detection_publisher_loop(sio_client, webcam, ort_session, interval=DEF
                     await asyncio.sleep(1.0)
                     continue
 
-                frame = None
-                if hasattr(webcam, 'get_frame'):
-                    frame = webcam.get_frame()
-                elif hasattr(webcam, 'capture_array'):
-                    frame = webcam.capture_array()
-
                 detections = []
-                if ort_session is not None and frame is not None:
-                    try:
-                        input_size = (640, 640)
-                        img = cv2.resize(frame, input_size)
-                        img_in = img.astype('float32') / 255.0
-                        img_in = np.transpose(img_in, (2, 0, 1))[None, :]
-                        outputs = ort_session.run(None, {ort_session.get_inputs()[0].name: img_in})
-                        
-                        h, w = frame.shape[:2]
-                        detections = parse_onnx_detections(
-                            outputs, 
-                            input_size=(640, 640), 
-                            orig_size=(w, h),
-                            iou_threshold=DEFAULT_NMS_IOU_THRESHOLD,
-                            earth_threshold=DEFAULT_EARTH_PERSON_THRESHOLD,
-                            sea_threshold=DEFAULT_SEA_PERSON_THRESHOLD
-                        )
-                    except Exception as e:
-                        logger.debug(f"Detection inference error: {e}")
+                
+                # CRITICAL: Get detections from video_track cache to match what's shown on screen
+                if video_track_ref is not None and hasattr(video_track_ref, 'cached_detections'):
+                    # Thread-safe copy of cached detections
+                    if hasattr(video_track_ref, 'detection_lock'):
+                        with video_track_ref.detection_lock:
+                            detections = video_track_ref.cached_detections.copy() if video_track_ref.cached_detections else []
+                    else:
+                        detections = video_track_ref.cached_detections.copy() if video_track_ref.cached_detections else []
+                    
+                    if detections:
+                        logger.debug(f"Using {len(detections)} detections from video_track cache")
+                else:
+                    logger.debug("No video_track reference, skipping detection publish")
                 
                 # Count by class (0: earth_person, 1: sea_person)
-                earth_person_count = sum(1 for d in detections if d['class'] == 0)
-                sea_person_count = sum(1 for d in detections if d['class'] == 1)
+                earth_person_count = sum(1 for d in detections if d.get('class') == 0)
+                sea_person_count = sum(1 for d in detections if d.get('class') == 1)
                 total_person_count = earth_person_count + sea_person_count
 
                 payload = {
@@ -501,7 +493,10 @@ async def detection_publisher_loop(sio_client, webcam, ort_session, interval=DEF
                 }
                 try:
                     await sio_client.emit('detection_result', payload)
-                    logger.debug(f"Emitted detection_result: earth={earth_person_count}, sea={sea_person_count}")
+                    if total_person_count > 0:
+                        logger.info(f"📊 Published detection: earth={earth_person_count}, sea={sea_person_count}, total={total_person_count}")
+                    else:
+                        logger.debug(f"Published detection: no objects detected")
                 except Exception as e:
                     logger.debug(f"Failed to emit detection_result: {e}")
 
@@ -576,8 +571,9 @@ async def connect():
     # Start detection publisher
     if detection_task and not detection_task.done():
         detection_task.cancel()
-    detection_task = asyncio.create_task(detection_publisher_loop(sio, webcam, ort_session))
-    logger.info("Started detection publisher task")
+    # Pass video_track reference to publisher so it can read cached detections
+    detection_task = asyncio.create_task(detection_publisher_loop(sio, webcam, ort_session, video_track_ref=video_track))
+    logger.info("Started detection publisher task (synced with video_track)")
     
 
 
@@ -605,7 +601,14 @@ async def start_webrtc(data):
     """Handle start request from frontend - create and send an offer"""
     global user_stopped
     try:
+        requested_device = data.get('device_id')
         logger.info(f"Received start_webrtc request from server/frontend: {data}")
+        
+        # Only respond if this request is for this drone
+        if requested_device and requested_device != device_id:
+            logger.debug(f"Ignoring start_webrtc for device '{requested_device}' (I am '{device_id}')")
+            return
+        
         user_stopped = False
         await restart_webrtc()
     except Exception as e:
@@ -617,8 +620,14 @@ async def stop_webrtc(data):
     """Handle stop request from frontend - close peer and stop track"""
     global user_stopped, peer_connection, video_track
     try:
-        device = data.get('device_id')
-        logger.info(f"Received stop_webrtc request for device: {device}")
+        requested_device = data.get('device_id')
+        logger.info(f"Received stop_webrtc request for device: {requested_device}")
+        
+        # Only respond if this request is for this drone
+        if requested_device and requested_device != device_id:
+            logger.debug(f"Ignoring stop_webrtc for device '{requested_device}' (I am '{device_id}')")
+            return
+        
         user_stopped = True
         if video_track:
             try:
@@ -654,16 +663,21 @@ async def webrtc_answer(data):
             global pending_remote_ice
             if pending_remote_ice:
                 logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
+                
                 for cand in pending_remote_ice:
                         try:
-                            # Convert buffered candidate dict to RTCIceCandidate
+                            # Parse buffered candidates using RTCIceCandidate.from_sdp
                             if isinstance(cand, dict):
-                                rtc_cand = RTCIceCandidate(
-                                    candidate=cand.get('candidate'),  # The ICE candidate string
-                                    sdpMid=cand.get('sdpMid'),
-                                    sdpMLineIndex=cand.get('sdpMLineIndex')
-                                )
-                                await peer_connection.addIceCandidate(rtc_cand)
+                                sdp_candidate = cand.get('candidate', '')
+                                
+                                if sdp_candidate and sdp_candidate.startswith('candidate:'):
+                                    # Use RTCIceCandidate's from_sdp method
+                                    ice_candidate = RTCIceCandidate.from_sdp(sdp_candidate)
+                                    ice_candidate.sdpMid = cand.get('sdpMid')
+                                    ice_candidate.sdpMLineIndex = cand.get('sdpMLineIndex')
+                                    await peer_connection.addIceCandidate(ice_candidate)
+                                else:
+                                    logger.warning(f'Buffered candidate has invalid format: {sdp_candidate[:50] if sdp_candidate else "empty"}')
                             else:
                                 # If it's already an RTCIceCandidate object, add it directly
                                 await peer_connection.addIceCandidate(cand)
@@ -693,8 +707,8 @@ async def webrtc_ice_candidate(data):
             logger.debug('webrtc_ice_candidate called with no candidate payload')
             return
 
-        # Debug log the incoming candidate payload
-        logger.debug(f"Incoming ICE candidate payload: {candidate_payload}")
+        # Debug log the incoming candidate payload structure
+        logger.debug(f"Incoming ICE candidate keys: {candidate_payload.keys() if isinstance(candidate_payload, dict) else 'not a dict'}")
 
         # If peer connection or its remote description is not ready yet, buffer the candidate
         if not peer_connection or getattr(peer_connection, 'remoteDescription', None) is None:
@@ -703,22 +717,26 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # aiortc's addIceCandidate expects an RTCIceCandidate object
-            # RTCIceCandidate constructor takes: candidate, sdpMid, sdpMLineIndex
+            # aiortc expects RTCIceCandidate objects created from SDP
             if isinstance(candidate_payload, dict):
-                rtc_cand = RTCIceCandidate(
-                    candidate=candidate_payload.get('candidate'),  # The ICE candidate string
-                    sdpMid=candidate_payload.get('sdpMid'),
-                    sdpMLineIndex=candidate_payload.get('sdpMLineIndex')
-                )
-                await peer_connection.addIceCandidate(rtc_cand)
-                logger.debug('Added remote ICE candidate')
+                sdp_candidate = candidate_payload.get('candidate', '')
+                
+                if sdp_candidate and sdp_candidate.startswith('candidate:'):
+                    # Use RTCIceCandidate's from_sdp class method
+                    ice_candidate = RTCIceCandidate.from_sdp(sdp_candidate)
+                    ice_candidate.sdpMid = candidate_payload.get('sdpMid')
+                    ice_candidate.sdpMLineIndex = candidate_payload.get('sdpMLineIndex')
+                    
+                    await peer_connection.addIceCandidate(ice_candidate)
+                    logger.debug('Added remote ICE candidate')
+                else:
+                    logger.warning(f'ICE candidate has invalid format: {sdp_candidate[:50] if sdp_candidate else "empty"}')
             else:
                 # If it's already an RTCIceCandidate object, add it directly
                 await peer_connection.addIceCandidate(candidate_payload)
                 logger.debug('Added remote ICE candidate (direct)')
         except Exception as e:
-            logger.error(f'Failed to add ICE candidate immediately: {e}. Buffering candidate.')
+            logger.error(f'Failed to add ICE candidate: {e}. Buffering candidate.')
             pending_remote_ice.append(candidate_payload)
     except Exception as e:
         logger.error(f"Error handling ICE candidate: {e}")
