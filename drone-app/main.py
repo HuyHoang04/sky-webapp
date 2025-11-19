@@ -29,9 +29,11 @@ from aiortc import (
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from av import VideoFrame
 from camera_utils import setup_camera, load_onnx_model
-from capture_api import start_capture_server
 from gps_utils import read_gps, gps_task
 from video_stream import ObjectDetectionStreamTrack
+import io
+import cloudinary
+import cloudinary.uploader
 
 # Configure logging
 logging.basicConfig(
@@ -47,7 +49,7 @@ DEFAULT_DEVICE_ID = "drone-camera"  # Fixed device ID for easier debugging
 DEFAULT_DEVICE_NAME = "Drone Camera"
 
 # ========== VIDEO STREAMING CONFIGURATION (Có thể chỉnh tại đây) ==========
-DEFAULT_FPS = 30  # Frames per second (15-30 fps recommended)
+DEFAULT_FPS = 50  # Frames per second (15-30 fps recommended)
 DEFAULT_WIDTH = 1280  # Video width in pixels
 DEFAULT_HEIGHT = 720  # Video height in pixels
 DEFAULT_BITRATE = 3000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
@@ -55,7 +57,7 @@ DEFAULT_BITRATE = 3000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps rec
                            # Higher = better quality but more bandwidth
 DEFAULT_DETECTION_FRAME_INTERVAL = 5  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
                                         # Higher = less CPU usage but slower detection updates
-DEFAULT_DETECTION_PUBLISH_INTERVAL = 2.0  # seconds between detection publishes to server
+DEFAULT_DETECTION_PUBLISH_INTERVAL = 3.0  # seconds between detection publishes to server
 
 # DUAL THRESHOLD STRATEGY (Config 7A: tested and optimized)
 DEFAULT_CONFIDENCE_THRESHOLD = 0.05  # Fallback/general threshold
@@ -91,6 +93,8 @@ pending_remote_ice = []
 user_stopped = False
 detection_task = None
 latest_gps = None
+webrtc_restart_count = 0
+last_restart_time = 0
 
 
 async def create_peer_connection():
@@ -232,12 +236,26 @@ async def create_offer():
 
 
 async def restart_webrtc():
-    """Restart the WebRTC connection"""
-    logger.info("Restarting WebRTC connection")
+    """Restart the WebRTC connection with retry limit"""
+    global webrtc_restart_count, last_restart_time, pending_remote_ice
+    
+    # Rate limiting - don't restart too frequently
+    now = time.time()
+    if now - last_restart_time < 10:  # Min 10 seconds between restarts
+        webrtc_restart_count += 1
+        if webrtc_restart_count > 3:
+            logger.warning(f"⚠️ Too many WebRTC restarts ({webrtc_restart_count}), backing off...")
+            await asyncio.sleep(30)  # Wait 30s before trying again
+            webrtc_restart_count = 0
+    else:
+        # Reset counter if enough time has passed
+        webrtc_restart_count = 0
+    
+    last_restart_time = now
+    logger.info(f"🔄 Restarting WebRTC connection (attempt #{webrtc_restart_count + 1})")
     
     try:
         # Clear any buffered ICE candidates before restarting
-        global pending_remote_ice
         pending_remote_ice = []
 
         # Create a new offer
@@ -518,9 +536,10 @@ async def detection_publisher_loop(sio_client, webcam, ort_session, interval=DEF
 @sio.event
 async def connect():
     """Handle Socket.IO connection"""
-    logger.info(f"Connected to server as {device_id}")
+    logger.info(f"[DRONE] ✅ Connected to server as device_id: {device_id}")
     
     # Register device
+    logger.info(f"[DRONE] 📡 Registering as video device: {device_id}")
     await sio.emit(
         "register_video_device",
         {
@@ -533,6 +552,7 @@ async def connect():
             },
         },
     )
+    logger.info(f"[DRONE] ✅ Video device registration sent")
     
     # Create and send WebRTC offer
     try:
@@ -653,22 +673,56 @@ async def webrtc_answer(data):
             # After setting remote description, add any buffered ICE candidates
             global pending_remote_ice
             if pending_remote_ice:
-                logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
+                logger.info(f"🔄 [DRONE] Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
-                            # Convert buffered candidate dict to RTCIceCandidate
+                            # Parse and add buffered candidate
                             if isinstance(cand, dict):
+                                candidate_str = cand.get('candidate')
+                                sdp_mid = cand.get('sdpMid')
+                                sdp_mline_index = cand.get('sdpMLineIndex')
+                                
+                                parts = candidate_str.split()
+                                foundation = parts[0].split(':')[1]
+                                component = int(parts[1])
+                                protocol = parts[2]
+                                priority = int(parts[3])
+                                ip = parts[4]
+                                port = int(parts[5])
+                                typ = parts[7]
+                                
+                                related_address = None
+                                related_port = None
+                                i = 8
+                                while i < len(parts):
+                                    if parts[i] == 'raddr' and i + 1 < len(parts):
+                                        related_address = parts[i + 1]
+                                        i += 2
+                                    elif parts[i] == 'rport' and i + 1 < len(parts):
+                                        related_port = int(parts[i + 1])
+                                        i += 2
+                                    else:
+                                        i += 1
+                                
                                 rtc_cand = RTCIceCandidate(
-                                    candidate=cand.get('candidate'),  # The ICE candidate string
-                                    sdpMid=cand.get('sdpMid'),
-                                    sdpMLineIndex=cand.get('sdpMLineIndex')
+                                    component=component,
+                                    foundation=foundation,
+                                    ip=ip,
+                                    port=port,
+                                    priority=priority,
+                                    protocol=protocol,
+                                    type=typ,
+                                    relatedAddress=related_address,
+                                    relatedPort=related_port,
+                                    sdpMid=sdp_mid,
+                                    sdpMLineIndex=sdp_mline_index
                                 )
                                 await peer_connection.addIceCandidate(rtc_cand)
                             else:
-                                # If it's already an RTCIceCandidate object, add it directly
                                 await peer_connection.addIceCandidate(cand)
+                            logger.info(f"✅ [DRONE] Added buffered ICE candidate")
                         except Exception as e:
-                            logger.error(f"Failed to add buffered ICE candidate: {e}")
+                            logger.error(f"❌ [DRONE] Failed to add buffered ICE candidate: {e}")
                 pending_remote_ice = []
         else:
             logger.error("Received webrtc_answer but no peer connection exists")
@@ -689,12 +743,10 @@ async def webrtc_ice_candidate(data):
     """Handle ICE candidate from server"""
     try:
         candidate_payload = data.get('candidate') if isinstance(data, dict) else None
+        
         if not candidate_payload:
             logger.debug('webrtc_ice_candidate called with no candidate payload')
             return
-
-        # Debug log the incoming candidate payload
-        logger.debug(f"Incoming ICE candidate payload: {candidate_payload}")
 
         # If peer connection or its remote description is not ready yet, buffer the candidate
         if not peer_connection or getattr(peer_connection, 'remoteDescription', None) is None:
@@ -703,25 +755,182 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # aiortc's addIceCandidate expects an RTCIceCandidate object
-            # RTCIceCandidate constructor takes: candidate, sdpMid, sdpMLineIndex
+            # aiortc expects RTCIceCandidate object, not dict
+            # Parse candidate string manually
             if isinstance(candidate_payload, dict):
+                candidate_str = candidate_payload.get('candidate')
+                sdp_mid = candidate_payload.get('sdpMid')
+                sdp_mline_index = candidate_payload.get('sdpMLineIndex')
+                
+                # Parse candidate string: "candidate:foundation component protocol priority ip port typ type ..."
+                # Example: "candidate:2202223057 1 udp 2113937151 34a70fd6-ca00-4d5b-b443-cbfaf4f6c257.local 60815 typ host generation 0 ufrag lc5w network-cost 999"
+                parts = candidate_str.split()
+                if len(parts) < 8:
+                    raise ValueError(f"Invalid candidate string: {candidate_str}")
+                
+                # Extract fields
+                foundation = parts[0].split(':')[1]  # "candidate:2202223057" -> "2202223057"
+                component = int(parts[1])
+                protocol = parts[2]
+                priority = int(parts[3])
+                ip = parts[4]
+                port = int(parts[5])
+                # parts[6] is "typ"
+                typ = parts[7]
+                
+                # Optional fields
+                related_address = None
+                related_port = None
+                tcp_type = None
+                
+                # Parse remaining optional fields
+                i = 8
+                while i < len(parts):
+                    if parts[i] == 'raddr' and i + 1 < len(parts):
+                        related_address = parts[i + 1]
+                        i += 2
+                    elif parts[i] == 'rport' and i + 1 < len(parts):
+                        related_port = int(parts[i + 1])
+                        i += 2
+                    elif parts[i] == 'tcptype' and i + 1 < len(parts):
+                        tcp_type = parts[i + 1]
+                        i += 2
+                    else:
+                        i += 1
+                
+                # Create RTCIceCandidate object
                 rtc_cand = RTCIceCandidate(
-                    candidate=candidate_payload.get('candidate'),  # The ICE candidate string
-                    sdpMid=candidate_payload.get('sdpMid'),
-                    sdpMLineIndex=candidate_payload.get('sdpMLineIndex')
+                    component=component,
+                    foundation=foundation,
+                    ip=ip,
+                    port=port,
+                    priority=priority,
+                    protocol=protocol,
+                    type=typ,
+                    relatedAddress=related_address,
+                    relatedPort=related_port,
+                    sdpMid=sdp_mid,
+                    sdpMLineIndex=sdp_mline_index,
+                    tcpType=tcp_type
                 )
+                
                 await peer_connection.addIceCandidate(rtc_cand)
-                logger.debug('Added remote ICE candidate')
+                logger.debug(f'✅ [DRONE] Added ICE candidate: {typ} {ip}:{port}')
             else:
                 # If it's already an RTCIceCandidate object, add it directly
                 await peer_connection.addIceCandidate(candidate_payload)
-                logger.debug('Added remote ICE candidate (direct)')
+                logger.debug('✅ [DRONE] Added ICE candidate (direct)')
         except Exception as e:
-            logger.error(f'Failed to add ICE candidate immediately: {e}. Buffering candidate.')
+            logger.error(f'❌ [DRONE] Failed to add ICE candidate: {e}')
+            logger.debug(f'🔄 [DRONE] Buffering candidate')
             pending_remote_ice.append(candidate_payload)
     except Exception as e:
         logger.error(f"Error handling ICE candidate: {e}")
+
+
+@sio.event
+async def capture_command(data):
+    """Handle capture command from server (via Socket.IO)"""
+    try:
+        device_id_from_server = data.get('device_id')
+        timestamp = data.get('timestamp', datetime.now().isoformat())
+        
+        logger.info(f"📸 [DRONE] Received capture_command from server")
+        logger.info(f"📸 [DRONE] Data received: {data}")
+        logger.info(f"📸 [DRONE] My device_id: {device_id}")
+        logger.info(f"📸 [DRONE] Server device_id: {device_id_from_server}")
+        
+        # Verify device ID matches
+        if device_id_from_server != device_id:
+            logger.warning(f"📸 [DRONE] Device ID mismatch: {device_id_from_server} != {device_id}")
+            return
+        
+        # Capture image from camera
+        if not webcam:
+            logger.error("Camera not available for capture")
+            await sio.emit('capture_result', {
+                'device_id': device_id,
+                'success': False,
+                'error': 'Camera not available'
+            })
+            return
+        
+        # Get high-quality frame from camera
+        frame = webcam.get_frame()
+        if frame is None:
+            logger.error("Failed to capture frame from camera")
+            await sio.emit('capture_result', {
+                'device_id': device_id,
+                'success': False,
+                'error': 'Failed to capture frame'
+            })
+            return
+        
+        logger.info("📸 Frame captured successfully")
+        
+        # Encode to JPEG with high quality
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]
+        _, buffer = cv2.imencode('.jpg', frame, encode_param)
+        img_bytes = buffer.tobytes()
+        
+        # Read GPS data if available
+        gps_data = None
+        if latest_gps:
+            gps_data = {
+                'latitude': latest_gps.get('latitude'),
+                'longitude': latest_gps.get('longitude'),
+                'altitude': latest_gps.get('altitude'),
+                'speed': latest_gps.get('speed')
+            }
+            logger.info(f"📍 GPS data: {gps_data}")
+        
+        # Upload to Cloudinary
+        try:
+            # Cloudinary config
+            cloudinary.config(
+                cloud_name="dpvt5pxln",
+                api_key="756332772729963",
+                api_secret="T0xGIeRvdAzDVH1MqFy6iBIeVFg",
+                secure=True
+            )
+            
+            logger.info("☁️ Uploading to Cloudinary...")
+            result = cloudinary.uploader.upload(
+                io.BytesIO(img_bytes),
+                folder="drone_captures",
+                resource_type="image",
+                public_id=f"capture_{device_id}_{int(time.time())}"
+            )
+            
+            image_url = result.get('secure_url')
+            logger.info(f"✅ Image uploaded: {image_url}")
+            
+            # Send result back to server via Socket.IO
+            await sio.emit('capture_result', {
+                'device_id': device_id,
+                'success': True,
+                'image_url': image_url,
+                'gps_data': gps_data,
+                'timestamp': timestamp
+            })
+            
+            logger.info("📤 Capture result sent to server")
+            
+        except Exception as upload_error:
+            logger.error(f"Failed to upload to Cloudinary: {upload_error}")
+            await sio.emit('capture_result', {
+                'device_id': device_id,
+                'success': False,
+                'error': f'Upload failed: {str(upload_error)}'
+            })
+            
+    except Exception as e:
+        logger.error(f"Error handling capture command: {e}")
+        await sio.emit('capture_result', {
+            'device_id': device_id,
+            'success': False,
+            'error': str(e)
+        })
 
 
 async def health_check():
@@ -808,7 +1017,7 @@ async def main():
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH, help="Video width")
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help="Video height")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS, help="Video FPS")
-    parser.add_argument("--model", default="model_fp32.onnx", help="Path to ONNX model (use FP32, INT8 has zero confidence issue)")
+    parser.add_argument("--model", default="nano_model_fp32.onnx", help="Path to ONNX model (use FP32, INT8 has zero confidence issue)")
     parser.add_argument("--no-detection", action="store_true", help="Disable object detection")
 
     args = parser.parse_args()
@@ -846,12 +1055,7 @@ async def main():
                 return
     
     logger.info("Camera setup successful")
-    # Start capture API server so other services can request frames/detections
-    global capture_server_task
-    try:
-        capture_server_task = asyncio.create_task(start_capture_server(webcam, ort_session, host='0.0.0.0', port=8080))
-    except Exception as e:
-        logger.error(f"Failed to start capture server: {e}")
+
     
     # Start health check task
     health_check_task = asyncio.create_task(health_check())
