@@ -93,6 +93,8 @@ pending_remote_ice = []
 user_stopped = False
 detection_task = None
 latest_gps = None
+webrtc_restart_count = 0
+last_restart_time = 0
 
 
 async def create_peer_connection():
@@ -234,12 +236,26 @@ async def create_offer():
 
 
 async def restart_webrtc():
-    """Restart the WebRTC connection"""
-    logger.info("Restarting WebRTC connection")
+    """Restart the WebRTC connection with retry limit"""
+    global webrtc_restart_count, last_restart_time, pending_remote_ice
+    
+    # Rate limiting - don't restart too frequently
+    now = time.time()
+    if now - last_restart_time < 10:  # Min 10 seconds between restarts
+        webrtc_restart_count += 1
+        if webrtc_restart_count > 3:
+            logger.warning(f"⚠️ Too many WebRTC restarts ({webrtc_restart_count}), backing off...")
+            await asyncio.sleep(30)  # Wait 30s before trying again
+            webrtc_restart_count = 0
+    else:
+        # Reset counter if enough time has passed
+        webrtc_restart_count = 0
+    
+    last_restart_time = now
+    logger.info(f"🔄 Restarting WebRTC connection (attempt #{webrtc_restart_count + 1})")
     
     try:
         # Clear any buffered ICE candidates before restarting
-        global pending_remote_ice
         pending_remote_ice = []
 
         # Create a new offer
