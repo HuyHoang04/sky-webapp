@@ -660,8 +660,50 @@ async def webrtc_answer(data):
                 logger.info(f"🔄 [DRONE] Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
-                            # Pass dict or object directly to addIceCandidate
-                            await peer_connection.addIceCandidate(cand)
+                            # Parse and add buffered candidate
+                            if isinstance(cand, dict):
+                                candidate_str = cand.get('candidate')
+                                sdp_mid = cand.get('sdpMid')
+                                sdp_mline_index = cand.get('sdpMLineIndex')
+                                
+                                parts = candidate_str.split()
+                                foundation = parts[0].split(':')[1]
+                                component = int(parts[1])
+                                protocol = parts[2]
+                                priority = int(parts[3])
+                                ip = parts[4]
+                                port = int(parts[5])
+                                typ = parts[7]
+                                
+                                related_address = None
+                                related_port = None
+                                i = 8
+                                while i < len(parts):
+                                    if parts[i] == 'raddr' and i + 1 < len(parts):
+                                        related_address = parts[i + 1]
+                                        i += 2
+                                    elif parts[i] == 'rport' and i + 1 < len(parts):
+                                        related_port = int(parts[i + 1])
+                                        i += 2
+                                    else:
+                                        i += 1
+                                
+                                rtc_cand = RTCIceCandidate(
+                                    component=component,
+                                    foundation=foundation,
+                                    ip=ip,
+                                    port=port,
+                                    priority=priority,
+                                    protocol=protocol,
+                                    type=typ,
+                                    relatedAddress=related_address,
+                                    relatedPort=related_port,
+                                    sdpMid=sdp_mid,
+                                    sdpMLineIndex=sdp_mline_index
+                                )
+                                await peer_connection.addIceCandidate(rtc_cand)
+                            else:
+                                await peer_connection.addIceCandidate(cand)
                             logger.info(f"✅ [DRONE] Added buffered ICE candidate")
                         except Exception as e:
                             logger.error(f"❌ [DRONE] Failed to add buffered ICE candidate: {e}")
@@ -706,14 +748,69 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # aiortc's addIceCandidate can accept a dict directly
-            # Structure: {'candidate': 'candidate:...', 'sdpMid': '0', 'sdpMLineIndex': 0}
+            # aiortc expects RTCIceCandidate object, not dict
+            # Parse candidate string manually
             if isinstance(candidate_payload, dict):
-                logger.info(f"🔍 [DRONE] Adding ICE candidate from dict")
+                candidate_str = candidate_payload.get('candidate')
+                sdp_mid = candidate_payload.get('sdpMid')
+                sdp_mline_index = candidate_payload.get('sdpMLineIndex')
                 
-                # Try passing the dict directly - aiortc should handle it
-                await peer_connection.addIceCandidate(candidate_payload)
-                logger.info(f'✅ [DRONE] Added remote ICE candidate successfully')
+                logger.info(f"🔍 [DRONE] Parsing ICE candidate string")
+                
+                # Parse candidate string: "candidate:foundation component protocol priority ip port typ type ..."
+                # Example: "candidate:2202223057 1 udp 2113937151 34a70fd6-ca00-4d5b-b443-cbfaf4f6c257.local 60815 typ host generation 0 ufrag lc5w network-cost 999"
+                parts = candidate_str.split()
+                if len(parts) < 8:
+                    raise ValueError(f"Invalid candidate string: {candidate_str}")
+                
+                # Extract fields
+                foundation = parts[0].split(':')[1]  # "candidate:2202223057" -> "2202223057"
+                component = int(parts[1])
+                protocol = parts[2]
+                priority = int(parts[3])
+                ip = parts[4]
+                port = int(parts[5])
+                # parts[6] is "typ"
+                typ = parts[7]
+                
+                # Optional fields
+                related_address = None
+                related_port = None
+                tcp_type = None
+                
+                # Parse remaining optional fields
+                i = 8
+                while i < len(parts):
+                    if parts[i] == 'raddr' and i + 1 < len(parts):
+                        related_address = parts[i + 1]
+                        i += 2
+                    elif parts[i] == 'rport' and i + 1 < len(parts):
+                        related_port = int(parts[i + 1])
+                        i += 2
+                    elif parts[i] == 'tcptype' and i + 1 < len(parts):
+                        tcp_type = parts[i + 1]
+                        i += 2
+                    else:
+                        i += 1
+                
+                # Create RTCIceCandidate object
+                rtc_cand = RTCIceCandidate(
+                    component=component,
+                    foundation=foundation,
+                    ip=ip,
+                    port=port,
+                    priority=priority,
+                    protocol=protocol,
+                    type=typ,
+                    relatedAddress=related_address,
+                    relatedPort=related_port,
+                    sdpMid=sdp_mid,
+                    sdpMLineIndex=sdp_mline_index,
+                    tcpType=tcp_type
+                )
+                
+                await peer_connection.addIceCandidate(rtc_cand)
+                logger.info(f'✅ [DRONE] Added remote ICE candidate: {typ} {ip}:{port}')
             else:
                 # If it's already an RTCIceCandidate object, add it directly
                 await peer_connection.addIceCandidate(candidate_payload)
