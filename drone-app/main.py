@@ -55,7 +55,7 @@ DEFAULT_HEIGHT = 720  # Video height in pixels
 DEFAULT_BITRATE = 3000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
                            # Lower = less bandwidth but lower quality
                            # Higher = better quality but more bandwidth
-DEFAULT_DETECTION_FRAME_INTERVAL = 5  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
+DEFAULT_DETECTION_FRAME_INTERVAL = 10  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
                                         # Higher = less CPU usage but slower detection updates
 DEFAULT_DETECTION_PUBLISH_INTERVAL = 3.0  # seconds between detection publishes to server
 
