@@ -698,6 +698,9 @@ async def webrtc_answer(data):
                                     await peer_connection.addIceCandidate(ice_candidate)
                                 else:
                                     logger.warning(f'Buffered candidate has invalid format: {sdp_candidate[:50] if sdp_candidate else "empty"}')
+                        except Exception as e:
+                            # Log and continue processing the rest of buffered candidates
+                            logger.error(f"Failed to add buffered ICE candidate using from_sdp: {e}")
                 logger.info(f"🔄 [DRONE] Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
