@@ -59,6 +59,9 @@
                             <button id="stopStream" class="btn btn-danger">
                                 <i class="fas fa-stop me-1"></i>Dừng
                             </button>
+                            <button id="captureBtn" class="btn btn-warning ms-2">
+                                <i class="fas fa-camera me-1"></i>Chụp hình
+                            </button>
                         </div>
                         <div>
                             <span class="badge bg-info" id="connectionInfo">WebRTC</span>
@@ -275,6 +278,51 @@
         connectionState.textContent = 'Ngắt kết nối';
         latencyDisplay.textContent = '--';
         document.getElementById('quality').textContent = '--';
+    });
+    
+    // Sự kiện khi nhấn nút chụp hình
+    const captureBtn = document.getElementById('captureBtn');
+    captureBtn.addEventListener('click', function() {
+        console.log('📸 Gửi yêu cầu chụp hình...');
+        
+        // Disable button while processing
+        captureBtn.disabled = true;
+        captureBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Đang chụp...';
+        
+        // Emit capture request via Socket.IO
+        socket.emit('capture_request', {
+            device_id: deviceId,
+            timestamp: new Date().toISOString()
+        });
+        
+        // Re-enable button after 3 seconds
+        setTimeout(() => {
+            captureBtn.disabled = false;
+            captureBtn.innerHTML = '<i class="fas fa-camera me-1"></i>Chụp hình';
+        }, 3000);
+    });
+    
+    // Listen for capture success
+    socket.on('capture_success', function(data) {
+        if (data.device_id === deviceId) {
+            console.log('✅ Chụp hình thành công:', data);
+            
+            // Show success notification
+            alert(`✅ Chụp hình thành công!\n\nCapture ID: ${data.capture_id}\nGPS: ${data.gps_data?.latitude}, ${data.gps_data?.longitude}\nĐang phân tích AI...`);
+            
+            // Optional: Open image in new tab
+            // window.open(data.image_url, '_blank');
+        }
+    });
+    
+    // Listen for capture error
+    socket.on('capture_error', function(data) {
+        console.error('❌ Lỗi chụp hình:', data);
+        alert('❌ Lỗi chụp hình: ' + data.error);
+        
+        // Re-enable button
+        captureBtn.disabled = false;
+        captureBtn.innerHTML = '<i class="fas fa-camera me-1"></i>Chụp hình';
     });
     
     // Tự động bắt đầu stream khi trang được tải

@@ -86,6 +86,7 @@ def init_db():
         # Import all models to ensure they are registered
         from model.mission_model import Mission, Waypoint, Route, Order
         from model.voice_model import VoiceRecord
+        from model.capture_model import CaptureRecord
         
         # Create all tables
         Base.metadata.create_all(bind=engine)

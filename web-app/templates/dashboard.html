@@ -730,63 +730,37 @@
     // Capture high-quality image directly from drone camera (independent of WebRTC)
     async function captureCurrentFrame() {
         try {
+            // Get device ID from current video source
             const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
             
-            streamStatus.textContent = 'Đang chụp ảnh...';
-            streamStatus.className = 'badge bg-info';
+            console.log('📸 Sending capture request for device:', deviceId);
             
-            // Request high-quality image directly from drone's capture API
-            // This is independent of WebRTC stream and provides better quality
-            const droneHost = 'localhost'; // Change to drone's IP if needed
-            const dronePort = 8080;
-            const captureUrl = `http://${droneHost}:${dronePort}/capture?quality=95`;
+            // Disable button while processing
+            captureButton.disabled = true;
+            const originalHTML = captureButton.innerHTML;
+            captureButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Đang chụp...</span>';
             
-            try {
-                // Fetch high-quality image from drone
-                const response = await fetch(captureUrl);
-                if (!response.ok) {
-                    throw new Error(`Drone capture failed: ${response.status}`);
-                }
-                
-                const imageBlob = await response.blob();
-                
-                // Send to server for storage
-                const form = new FormData();
-                form.append('image', imageBlob, `${deviceId}_capture.jpg`);
-                form.append('device_id', deviceId);
-                
-                const saveResponse = await fetch('/api/capture', { method: 'POST', body: form });
-                
-                if (saveResponse.ok) {
-                    const result = await saveResponse.json();
-                    streamStatus.textContent = 'Ảnh đã lưu';
-                    streamStatus.className = 'badge bg-success';
-                    console.log('Image saved:', result.path);
-                    
-                    // Reset status after 3 seconds
-                    setTimeout(() => {
-                        streamStatus.textContent = peerConnection && peerConnection.connectionState === 'connected' ? 'Đang phát' : 'Ready';
-                        streamStatus.className = peerConnection && peerConnection.connectionState === 'connected' ? 'badge bg-success' : 'badge bg-secondary';
-                    }, 3000);
-                } else {
-                    const text = await saveResponse.text();
-                    console.error('Save failed:', saveResponse.status, text);
-                    streamStatus.textContent = 'Lỗi lưu ảnh';
-                    streamStatus.className = 'badge bg-danger';
-                }
-            } catch (err) {
-                console.error('Capture error:', err);
-                streamStatus.textContent = 'Lỗi chụp ảnh';
-                streamStatus.className = 'badge bg-danger';
-                
-                // Fallback: try to capture from video element if drone API fails
-                console.log('Falling back to video element capture...');
-                await captureFromVideoElement();
-            }
+            // Update status
+            streamStatus.textContent = 'Đang chụp...';
+            streamStatus.className = 'badge bg-warning';
+            
+            // Emit capture request via Socket.IO
+            socket.emit('capture_request', {
+                device_id: deviceId,
+                timestamp: new Date().toISOString()
+            });
+            
+            // Re-enable button after 3 seconds
+            setTimeout(() => {
+                captureButton.disabled = false;
+                captureButton.innerHTML = originalHTML;
+            }, 3000);
             
         } catch (err) {
-            console.error('Capture error:', err);
-            alert('Lỗi khi chụp ảnh: ' + err.message);
+            console.error('❌ Capture error:', err);
+            captureButton.disabled = false;
+            streamStatus.textContent = 'Lỗi chụp hình';
+            streamStatus.className = 'badge bg-danger';
         }
     }
     
@@ -1040,6 +1014,48 @@
                 })
             }).addTo(map).bindPopup(`${deviceName} (${deviceId})`);
         }
+    });
+    
+    // Listen for capture success
+    socket.on('capture_success', function(data) {
+        console.log('✅ Capture success:', data);
+        
+        // Update status
+        streamStatus.textContent = 'Chụp hình thành công!';
+        streamStatus.className = 'badge bg-success';
+        
+        // Show notification
+        if (window.Notification && Notification.permission === 'granted') {
+            new Notification('Chụp hình thành công', {
+                body: `Capture ID: ${data.capture_id}\nĐang phân tích AI...`,
+                icon: '/static/images/camera-icon.png'
+            });
+        }
+        
+        // Reset status after 3 seconds
+        setTimeout(() => {
+            streamStatus.textContent = 'Ready';
+            streamStatus.className = 'badge bg-success';
+        }, 3000);
+    });
+    
+    // Listen for capture error
+    socket.on('capture_error', function(data) {
+        console.error('❌ Capture error:', data);
+        
+        // Update status
+        streamStatus.textContent = 'Lỗi: ' + data.error;
+        streamStatus.className = 'badge bg-danger';
+        
+        // Re-enable button
+        captureButton.disabled = false;
+        captureButton.innerHTML = '<i class="fas fa-camera"></i> <span>Capture</span>';
+        
+        // Reset status after 5 seconds
+        setTimeout(() => {
+            streamStatus.textContent = 'Ready';
+            streamStatus.className = 'badge bg-success';
+        }, 5000);
     });
 </script>
 {% endblock %}
