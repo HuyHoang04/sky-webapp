@@ -55,9 +55,9 @@ DEFAULT_HEIGHT = 720  # Video height in pixels
 DEFAULT_BITRATE = 3000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
                            # Lower = less bandwidth but lower quality
                            # Higher = better quality but more bandwidth
-DEFAULT_DETECTION_FRAME_INTERVAL = 5  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
+DEFAULT_DETECTION_FRAME_INTERVAL = 15  # AI detection runs every N frames (15 = ~2x/sec at 30fps)
                                         # Higher = less CPU usage but slower detection updates
-DEFAULT_DETECTION_PUBLISH_INTERVAL = 2.0  # seconds between detection publishes to server
+DEFAULT_DETECTION_PUBLISH_INTERVAL = 3.0  # seconds between detection publishes to server
 
 # DUAL THRESHOLD STRATEGY (Config 7A: tested and optimized)
 DEFAULT_CONFIDENCE_THRESHOLD = 0.05  # Fallback/general threshold
@@ -726,20 +726,11 @@ async def webrtc_answer(data):
 async def webrtc_ice_candidate(data):
     """Handle ICE candidate from server"""
     try:
-        logger.info(f"🔍 [DRONE] Received webrtc_ice_candidate event")
-        logger.info(f"🔍 [DRONE] Raw data: {data}")
-        logger.info(f"🔍 [DRONE] Data type: {type(data)}")
-        
         candidate_payload = data.get('candidate') if isinstance(data, dict) else None
-        logger.info(f"🔍 [DRONE] Extracted candidate_payload: {candidate_payload}")
-        logger.info(f"🔍 [DRONE] Candidate payload type: {type(candidate_payload)}")
         
         if not candidate_payload:
             logger.debug('webrtc_ice_candidate called with no candidate payload')
             return
-
-        # Debug log the incoming candidate payload
-        logger.info(f"🔍 [DRONE] Candidate payload keys: {candidate_payload.keys() if isinstance(candidate_payload, dict) else 'N/A'}")
 
         # If peer connection or its remote description is not ready yet, buffer the candidate
         if not peer_connection or getattr(peer_connection, 'remoteDescription', None) is None:
@@ -754,8 +745,6 @@ async def webrtc_ice_candidate(data):
                 candidate_str = candidate_payload.get('candidate')
                 sdp_mid = candidate_payload.get('sdpMid')
                 sdp_mline_index = candidate_payload.get('sdpMLineIndex')
-                
-                logger.info(f"🔍 [DRONE] Parsing ICE candidate string")
                 
                 # Parse candidate string: "candidate:foundation component protocol priority ip port typ type ..."
                 # Example: "candidate:2202223057 1 udp 2113937151 34a70fd6-ca00-4d5b-b443-cbfaf4f6c257.local 60815 typ host generation 0 ufrag lc5w network-cost 999"
@@ -810,16 +799,14 @@ async def webrtc_ice_candidate(data):
                 )
                 
                 await peer_connection.addIceCandidate(rtc_cand)
-                logger.info(f'✅ [DRONE] Added remote ICE candidate: {typ} {ip}:{port}')
+                logger.debug(f'✅ [DRONE] Added ICE candidate: {typ} {ip}:{port}')
             else:
                 # If it's already an RTCIceCandidate object, add it directly
                 await peer_connection.addIceCandidate(candidate_payload)
-                logger.info('✅ [DRONE] Added remote ICE candidate (direct)')
+                logger.debug('✅ [DRONE] Added ICE candidate (direct)')
         except Exception as e:
             logger.error(f'❌ [DRONE] Failed to add ICE candidate: {e}')
-            import traceback
-            logger.error(traceback.format_exc())
-            logger.info(f'🔄 [DRONE] Buffering candidate for later')
+            logger.debug(f'🔄 [DRONE] Buffering candidate')
             pending_remote_ice.append(candidate_payload)
     except Exception as e:
         logger.error(f"Error handling ICE candidate: {e}")
