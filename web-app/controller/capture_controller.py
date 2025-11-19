@@ -28,16 +28,21 @@ def handle_capture_request(data):
     try:
         device_id = data.get('device_id', 'drone-camera')
         
-        logger.info(f"[CAPTURE] 📸 Received capture request for device: {device_id}")
+        logger.info(f"[WEBAPP] 📸 Received capture_request from frontend")
+        logger.info(f"[WEBAPP] 📸 Data: {data}")
+        logger.info(f"[WEBAPP] 📸 Target device_id: {device_id}")
         
         # Forward capture command to specific drone device room
-        socketio.emit('capture_command', {
+        command_data = {
             'device_id': device_id,
             'timestamp': data.get('timestamp'),
             'quality': 95
-        }, to=device_id)
+        }
+        logger.info(f"[WEBAPP] 📤 Emitting capture_command to room '{device_id}' with data: {command_data}")
         
-        logger.info(f"[CAPTURE] ✅ Forwarded capture command to device room: {device_id}")
+        socketio.emit('capture_command', command_data, to=device_id)
+        
+        logger.info(f"[WEBAPP] ✅ Capture command emitted to room: {device_id}")
         
     except Exception as e:
         logger.error(f"[CAPTURE] ❌ Error handling capture request: {str(e)}")

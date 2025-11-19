@@ -520,9 +520,10 @@ async def detection_publisher_loop(sio_client, webcam, ort_session, interval=DEF
 @sio.event
 async def connect():
     """Handle Socket.IO connection"""
-    logger.info(f"Connected to server as {device_id}")
+    logger.info(f"[DRONE] ✅ Connected to server as device_id: {device_id}")
     
     # Register device
+    logger.info(f"[DRONE] 📡 Registering as video device: {device_id}")
     await sio.emit(
         "register_video_device",
         {
@@ -535,6 +536,7 @@ async def connect():
             },
         },
     )
+    logger.info(f"[DRONE] ✅ Video device registration sent")
     
     # Create and send WebRTC offer
     try:
@@ -690,13 +692,20 @@ async def webrtc_answer(data):
 async def webrtc_ice_candidate(data):
     """Handle ICE candidate from server"""
     try:
+        logger.info(f"🔍 [DRONE] Received webrtc_ice_candidate event")
+        logger.info(f"🔍 [DRONE] Raw data: {data}")
+        logger.info(f"🔍 [DRONE] Data type: {type(data)}")
+        
         candidate_payload = data.get('candidate') if isinstance(data, dict) else None
+        logger.info(f"🔍 [DRONE] Extracted candidate_payload: {candidate_payload}")
+        logger.info(f"🔍 [DRONE] Candidate payload type: {type(candidate_payload)}")
+        
         if not candidate_payload:
             logger.debug('webrtc_ice_candidate called with no candidate payload')
             return
 
         # Debug log the incoming candidate payload
-        logger.debug(f"Incoming ICE candidate payload: {candidate_payload}")
+        logger.info(f"🔍 [DRONE] Candidate payload keys: {candidate_payload.keys() if isinstance(candidate_payload, dict) else 'N/A'}")
 
         # If peer connection or its remote description is not ready yet, buffer the candidate
         if not peer_connection or getattr(peer_connection, 'remoteDescription', None) is None:
@@ -705,22 +714,29 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # aiortc's addIceCandidate expects an RTCIceCandidate object
-            # RTCIceCandidate constructor takes: candidate, sdpMid, sdpMLineIndex
+            # aiortc's RTCIceCandidate constructor signature:
+            # RTCIceCandidate(sdpMid, sdpMLineIndex, candidate)
+            # NOT keyword arguments!
             if isinstance(candidate_payload, dict):
+                # Extract fields from dict
+                sdp_mid = candidate_payload.get('sdpMid')
+                sdp_mline_index = candidate_payload.get('sdpMLineIndex')
+                candidate_str = candidate_payload.get('candidate')
+                
+                # Create RTCIceCandidate with positional args
                 rtc_cand = RTCIceCandidate(
-                    candidate=candidate_payload.get('candidate'),  # The ICE candidate string
-                    sdpMid=candidate_payload.get('sdpMid'),
-                    sdpMLineIndex=candidate_payload.get('sdpMLineIndex')
+                    sdpMid=sdp_mid,
+                    sdpMLineIndex=sdp_mline_index,
+                    candidate=candidate_str
                 )
                 await peer_connection.addIceCandidate(rtc_cand)
-                logger.debug('Added remote ICE candidate')
+                logger.debug(f'✅ Added remote ICE candidate: {candidate_str[:50]}...')
             else:
                 # If it's already an RTCIceCandidate object, add it directly
                 await peer_connection.addIceCandidate(candidate_payload)
-                logger.debug('Added remote ICE candidate (direct)')
+                logger.debug('✅ Added remote ICE candidate (direct)')
         except Exception as e:
-            logger.error(f'Failed to add ICE candidate immediately: {e}. Buffering candidate.')
+            logger.error(f'❌ Failed to add ICE candidate: {e}. Buffering candidate.')
             pending_remote_ice.append(candidate_payload)
     except Exception as e:
         logger.error(f"Error handling ICE candidate: {e}")
@@ -733,11 +749,14 @@ async def capture_command(data):
         device_id_from_server = data.get('device_id')
         timestamp = data.get('timestamp', datetime.now().isoformat())
         
-        logger.info(f"📸 Received capture command for device: {device_id_from_server}")
+        logger.info(f"📸 [DRONE] Received capture_command from server")
+        logger.info(f"📸 [DRONE] Data received: {data}")
+        logger.info(f"📸 [DRONE] My device_id: {device_id}")
+        logger.info(f"📸 [DRONE] Server device_id: {device_id_from_server}")
         
         # Verify device ID matches
         if device_id_from_server != device_id:
-            logger.warning(f"Device ID mismatch: {device_id_from_server} != {device_id}")
+            logger.warning(f"📸 [DRONE] Device ID mismatch: {device_id_from_server} != {device_id}")
             return
         
         # Capture image from camera
