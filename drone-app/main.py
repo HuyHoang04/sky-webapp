@@ -49,7 +49,7 @@ DEFAULT_DEVICE_ID = "drone-camera"  # Fixed device ID for easier debugging
 DEFAULT_DEVICE_NAME = "Drone Camera"
 
 # ========== VIDEO STREAMING CONFIGURATION (Có thể chỉnh tại đây) ==========
-DEFAULT_FPS = 15  # Frames per second (15-30 fps recommended)
+DEFAULT_FPS = 50  # Frames per second (15-30 fps recommended)
 DEFAULT_WIDTH = 1280  # Video width in pixels
 DEFAULT_HEIGHT = 720  # Video height in pixels
 DEFAULT_BITRATE = 3000000  # Video bitrate in bits/s (4Mbps default, 3-6Mbps recommended for 720p)
