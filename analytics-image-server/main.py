@@ -76,7 +76,7 @@ app = FastAPI(title="Cloud AI - YOLOv11s Inference")
 # ============= LOAD YOLO MODEL =============
 try:
     model = YOLO(
-        r"D:\STUDY\Ky1_Nam4\Thiet_Ke_Dien_Tu_PTIT\AI_Human\Dataset\yolo11s.pt"
+        r"./best.pt"
     )
     logger.info("Loaded YOLOv11s model successfully.")
 except Exception as e:
