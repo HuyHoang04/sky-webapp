@@ -1057,5 +1057,46 @@
             streamStatus.className = 'badge bg-success';
         }, 5000);
     });
+    
+    // Listen for AI analysis complete
+    socket.on('capture_analyzed', function(data) {
+        console.log('🤖 AI Analysis complete:', data);
+        
+        // Update status
+        streamStatus.textContent = 'Phân tích hoàn tất!';
+        streamStatus.className = 'badge bg-info';
+        
+        // Update person counts with analyzed data
+        if (data.person_count !== undefined) {
+            document.getElementById('totalPersonCount').textContent = data.person_count || 0;
+        }
+        if (data.earth_person_count !== undefined) {
+            document.getElementById('earthPersonCount').textContent = data.earth_person_count || 0;
+        }
+        if (data.sea_person_count !== undefined) {
+            document.getElementById('seaPersonCount').textContent = data.sea_person_count || 0;
+        }
+        
+        // Show notification with analyzed image
+        if (window.Notification && Notification.permission === 'granted') {
+            new Notification('Phân tích AI hoàn tất', {
+                body: `Tổng: ${data.person_count || 0} người\nĐất: ${data.earth_person_count || 0}, Biển: ${data.sea_person_count || 0}`,
+                icon: '/static/images/ai-icon.png'
+            });
+        }
+        
+        // Optional: Display analyzed image in a modal or side panel
+        if (data.analyzed_image_url) {
+            console.log('📸 Analyzed image URL:', data.analyzed_image_url);
+            // TODO: You can add code here to display the analyzed image
+            // Example: Open in modal, update thumbnail, etc.
+        }
+        
+        // Reset status after 3 seconds
+        setTimeout(() => {
+            streamStatus.textContent = 'Ready';
+            streamStatus.className = 'badge bg-success';
+        }, 3000);
+    });
 </script>
 {% endblock %}
