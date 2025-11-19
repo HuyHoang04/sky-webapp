@@ -641,66 +641,8 @@
     }
 
     // Capture high-quality image directly from drone camera (independent of WebRTC)
-    async function captureCurrentFrame() {
-        try {
-            const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
-            
-            streamStatus.textContent = 'Đang chụp ảnh...';
-            streamStatus.className = 'badge bg-info';
-            
-            // Request high-quality image directly from drone's capture API
-            // This is independent of WebRTC stream and provides better quality
-            const droneHost = 'localhost'; // Change to drone's IP if needed
-            const dronePort = 8080;
-            const captureUrl = `http://${droneHost}:${dronePort}/capture?quality=95`;
-            
-            try {
-                // Fetch high-quality image from drone
-                const response = await fetch(captureUrl);
-                if (!response.ok) {
-                    throw new Error(`Drone capture failed: ${response.status}`);
-                }
-                
-                const imageBlob = await response.blob();
-                
-                // Send to server for storage
-                const form = new FormData();
-                form.append('image', imageBlob, `${deviceId}_capture.jpg`);
-                form.append('device_id', deviceId);
-                
-                const saveResponse = await fetch('/api/capture', { method: 'POST', body: form });
-                
-                if (saveResponse.ok) {
-                    const result = await saveResponse.json();
-                    streamStatus.textContent = 'Ảnh đã lưu';
-                    streamStatus.className = 'badge bg-success';
-                    console.log('Image saved:', result.path);
-                    
-                    // Reset status after 3 seconds
-                    setTimeout(() => {
-                        streamStatus.textContent = peerConnection && peerConnection.connectionState === 'connected' ? 'Đang phát' : 'Ready';
-                        streamStatus.className = peerConnection && peerConnection.connectionState === 'connected' ? 'badge bg-success' : 'badge bg-secondary';
-                    }, 3000);
-                } else {
-                    const text = await saveResponse.text();
-                    console.error('Save failed:', saveResponse.status, text);
-                    streamStatus.textContent = 'Lỗi lưu ảnh';
-                    streamStatus.className = 'badge bg-danger';
-                }
-            } catch (err) {
-                console.error('Capture error:', err);
-                streamStatus.textContent = 'Lỗi chụp ảnh';
-                streamStatus.className = 'badge bg-danger';
-                
-                // Fallback: try to capture from video element if drone API fails
-                console.log('Falling back to video element capture...');
-                await captureFromVideoElement();
-            }
-            
-        } catch (err) {
-            console.error('Capture error:', err);
-            alert('Lỗi khi chụp ảnh: ' + err.message);
-        }
+    async function captureCurrentFrame() {  
+        // Gửi yêu cầu capture đến drone
     }
     
     // Fallback method: capture from video element (lower quality)

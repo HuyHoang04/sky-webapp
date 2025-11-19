@@ -29,7 +29,6 @@ from aiortc import (
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from av import VideoFrame
 from camera_utils import setup_camera, load_onnx_model
-from capture_api import start_capture_server
 from gps_utils import read_gps, gps_task
 from video_stream import ObjectDetectionStreamTrack
 
@@ -846,12 +845,7 @@ async def main():
                 return
     
     logger.info("Camera setup successful")
-    # Start capture API server so other services can request frames/detections
-    global capture_server_task
-    try:
-        capture_server_task = asyncio.create_task(start_capture_server(webcam, ort_session, host='0.0.0.0', port=8080))
-    except Exception as e:
-        logger.error(f"Failed to start capture server: {e}")
+
     
     # Start health check task
     health_check_task = asyncio.create_task(health_check())
