@@ -17,10 +17,11 @@ def handle_detection_result(data):
         sea_count = data.get('sea_person_count', 0)
         total_count = data.get('person_count', 0)
         
-        logger.info(f"Detection from {device_id}: earth={earth_count}, sea={sea_count}, total={total_count}")
+        # Log chi tiết để debug
+        logger.info(f"📥 RECEIVED detection_result from drone: device={device_id}, earth={earth_count}, sea={sea_count}, total={total_count}")
         
-        # Broadcast to all connected clients
-        socketio.emit('detection_update', {
+        # Prepare broadcast data
+        broadcast_data = {
             'device_id': device_id,
             'earth_person_count': earth_count,
             'sea_person_count': sea_count,
@@ -28,14 +29,47 @@ def handle_detection_result(data):
             'timestamp': data.get('timestamp'),
             'detections': data.get('detections', []),
             'gps': data.get('gps')
-        })
+        }
+        
+        # Broadcast to all connected clients (no 'broadcast' parameter needed in Flask-SocketIO)
+        socketio.emit('detection_update', broadcast_data)
+        logger.info(f"📤 BROADCASTED detection_update to all clients: earth={earth_count}, sea={sea_count}, total={total_count}")
         
     except Exception as e:
-        logger.error(f"Error handling detection result: {e}")
+        logger.error(f"❌ Error handling detection result: {e}", exc_info=True)
 
 @detection_blueprint.route('/detection')
 def detection_page():
     return render_template('detection.html')
+
+@detection_blueprint.route('/api/test_detection', methods=['POST'])
+def test_detection_broadcast():
+    """Test endpoint to manually trigger detection broadcast"""
+    try:
+        import random
+        test_data = {
+            'device_id': 'test-device',
+            'earth_person_count': random.randint(0, 5),
+            'sea_person_count': random.randint(0, 5),
+            'person_count': 0,
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'detections': [],
+            'gps': None
+        }
+        test_data['person_count'] = test_data['earth_person_count'] + test_data['sea_person_count']
+        
+        # Broadcast test detection (no 'broadcast' parameter in Flask-SocketIO)
+        socketio.emit('detection_update', test_data)
+        logger.info(f"🧪 TEST broadcast: earth={test_data['earth_person_count']}, sea={test_data['sea_person_count']}, total={test_data['person_count']}")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Test detection broadcast sent',
+            'data': test_data
+        })
+    except Exception as e:
+        logger.error(f"Error in test broadcast: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @detection_blueprint.route('/api/items', methods=['GET', 'POST'])
 def handle_items():

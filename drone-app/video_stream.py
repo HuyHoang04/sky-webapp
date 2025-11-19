@@ -76,6 +76,7 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
         """Background thread that processes AI detection without blocking video stream"""
         logger.info("🤖 AI detection worker thread started (YOLO model: earth_person, sea_person)")
         frame_count = 0
+        last_log_time = time.time()
         while self.running:
             try:
                 # Check if there's a frame to process
@@ -86,17 +87,24 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
                 
                 if frame_to_process is not None:
                     frame_count += 1
-                    logger.debug(f"Processing frame #{frame_count} for AI detection...")
+                    start_time = time.time()
                     
                     # Run detection in background thread
                     detections = self.detect_objects(frame_to_process)
                     
+                    inference_time = (time.time() - start_time) * 1000  # ms
+                    
                     # Update cached detections
                     with self.detection_lock:
                         self.cached_detections = detections
+                    
+                    # Log every 5 seconds
+                    if time.time() - last_log_time > 5.0:
+                        logger.info(f"⚡ Detection worker: {frame_count} frames processed, last inference: {inference_time:.1f}ms")
+                        last_log_time = time.time()
                 else:
-                    # No frame to process, sleep briefly
-                    time.sleep(0.05)
+                    # No frame to process, sleep briefly (reduced from 0.05 to 0.02 for faster response)
+                    time.sleep(0.02)
                     
             except Exception as e:
                 logger.error(f"Detection worker error: {e}", exc_info=True)
@@ -182,8 +190,8 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
             # Only queue if AI is enabled and it's time for detection update
             if self.ort_session is not None and self.counter % self.detection_update_interval == 0:
                 with self.detection_lock:
-                    # Keep queue small (max 2 frames) to avoid memory buildup
-                    if len(self.detection_queue) < 2:
+                    # Keep queue small (max 3 frames) to handle burst processing
+                    if len(self.detection_queue) < 3:
                         self.detection_queue.append(frame.copy())
             
             # Draw bounding boxes on every frame using cached detections

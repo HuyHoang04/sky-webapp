@@ -44,6 +44,13 @@
     .controls {
         margin-top: 10px;
     }
+    
+    /* Pulse animation for detection count updates */
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.2); }
+        100% { transform: scale(1); }
+    }
 </style>
 {% endblock %}
 
@@ -135,8 +142,11 @@
             
             <!-- Detection Stats Card - Below Video -->
             <div class="card mt-3">
-                <div class="card-header">
+                <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="mb-0"><i class="fas fa-users me-2"></i>Thống kê phát hiện</h5>
+                    <button class="btn btn-sm btn-outline-info" onclick="testDetectionUpdate()">
+                        <i class="fas fa-flask"></i> Test Update
+                    </button>
                 </div>
                 <div class="card-body">
                     <div class="row text-center">
@@ -349,6 +359,19 @@
     // Khởi tạo kết nối Socket.IO và gán global để video-layout.js dùng
     window.socket = io();
     
+    // Debug: Log socket connection status
+    socket.on('connect', function() {
+        console.log('✅ Socket.IO connected! ID:', socket.id);
+    });
+    
+    socket.on('disconnect', function() {
+        console.log('❌ Socket.IO disconnected!');
+    });
+    
+    socket.on('connect_error', function(error) {
+        console.error('❌ Socket.IO connection error:', error);
+    });
+    
     // Khởi tạo bản đồ
     let map = L.map('map').setView([21.0285, 105.8542], 13);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -512,12 +535,76 @@
     
     // Listen for detection updates via Socket.IO
     socket.on('detection_update', function(data) {
-        console.log('Received detection update:', data);
-        // Update person counts
-        document.getElementById('earthPersonCount').textContent = data.earth_person_count || 0;
-        document.getElementById('seaPersonCount').textContent = data.sea_person_count || 0;
-        document.getElementById('totalPersonCount').textContent = data.person_count || 0;
+        console.log('📊 Received detection update:', data);
+        
+        // Update person counts with animation
+        const earthEl = document.getElementById('earthPersonCount');
+        const seaEl = document.getElementById('seaPersonCount');
+        const totalEl = document.getElementById('totalPersonCount');
+        
+        if (!earthEl || !seaEl || !totalEl) {
+            console.error('❌ Detection count elements not found!');
+            return;
+        }
+        
+        const earthCount = data.earth_person_count || 0;
+        const seaCount = data.sea_person_count || 0;
+        const totalCount = data.person_count || 0;
+        
+        // Update with visual feedback
+        earthEl.textContent = earthCount;
+        seaEl.textContent = seaCount;
+        totalEl.textContent = totalCount;
+        
+        console.log(`✅ Updated UI: Earth=${earthCount}, Sea=${seaCount}, Total=${totalCount}`);
+        
+        // Add pulse effect when count changes
+        if (totalCount > 0) {
+            earthEl.style.animation = 'pulse 0.3s';
+            seaEl.style.animation = 'pulse 0.3s';
+            totalEl.style.animation = 'pulse 0.3s';
+            setTimeout(() => {
+                earthEl.style.animation = '';
+                seaEl.style.animation = '';
+                totalEl.style.animation = '';
+            }, 300);
+        }
     });
+    
+    // Test function to manually trigger detection update
+    function testDetectionUpdate() {
+        console.log('🧪 Testing detection update...');
+        
+        // Method 1: Call server test endpoint
+        fetch('/api/test_detection', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('✅ Server test response:', data);
+        })
+        .catch(error => {
+            console.error('❌ Server test failed:', error);
+        });
+        
+        // Method 2: Also test local update
+        const testData = {
+            device_id: 'test',
+            earth_person_count: Math.floor(Math.random() * 10),
+            sea_person_count: Math.floor(Math.random() * 10),
+            person_count: 0,
+            timestamp: new Date().toISOString()
+        };
+        testData.person_count = testData.earth_person_count + testData.sea_person_count;
+        
+        // Update UI directly for immediate feedback
+        document.getElementById('earthPersonCount').textContent = testData.earth_person_count;
+        document.getElementById('seaPersonCount').textContent = testData.sea_person_count;
+        document.getElementById('totalPersonCount').textContent = testData.person_count;
+        
+        console.log('✅ Local test data:', testData);
+    }
     
     // Xử lý khi nhận dữ liệu GPS mới
     socket.on('gps_update', function(data) {
