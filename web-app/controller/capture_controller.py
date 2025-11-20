@@ -11,6 +11,7 @@ from socket_instance import socketio
 from flask_socketio import emit
 from database import SessionLocal
 from model.capture_model import CaptureRecord
+from controller.gps_controller import gps_data_store
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +83,38 @@ def handle_capture_result(data):
         
         # Extract data
         image_url = data.get('image_url')
-        gps_data = data.get('gps_data', {})
         timestamp = data.get('timestamp')
         
         logger.info(f"[CAPTURE] 📸 Image URL: {image_url}")
-        logger.info(f"[CAPTURE] 📍 GPS: {gps_data}")
+        
+        # Get GPS from webapp gps_data_store (same as voice service)
+        latitude = None
+        longitude = None
+        altitude = None
+        gps_data = None
+        
+        logger.info(f"[CAPTURE] 🔍 device_id='{device_id}'")
+        logger.info(f"[CAPTURE] 🔍 gps_data_store={gps_data_store}")
+        logger.info(f"[CAPTURE] 🔍 store keys={list(gps_data_store.keys()) if gps_data_store else 'None'}")
+        
+        if gps_data_store and device_id in gps_data_store:
+            gps_data = gps_data_store[device_id]
+            latitude = gps_data.get('latitude')
+            longitude = gps_data.get('longitude')
+            altitude = gps_data.get('altitude', 0)
+            logger.info(f"[CAPTURE] 📍 GPS from store: lat={latitude}, lon={longitude}, alt={altitude}")
+        else:
+            logger.warning(f"[CAPTURE] ⚠️ No GPS data in store for device: {device_id}")
+        
+        # Parse timestamp - handle ISO format with 'Z'
+        capture_time = datetime.now()
+        if timestamp:
+            try:
+                # Replace 'Z' with '+00:00' for proper ISO parsing
+                timestamp_normalized = timestamp.replace('Z', '+00:00')
+                capture_time = datetime.fromisoformat(timestamp_normalized)
+            except Exception as ts_error:
+                logger.warning(f"[CAPTURE] ⚠️ Could not parse timestamp '{timestamp}': {ts_error}")
         
         # Save to database
         db = SessionLocal()
@@ -94,11 +122,11 @@ def handle_capture_result(data):
             capture_record = CaptureRecord(
                 device_id=device_id,
                 original_image_url=image_url,
-                latitude=gps_data.get('latitude') if gps_data else None,
-                longitude=gps_data.get('longitude') if gps_data else None,
-                altitude=gps_data.get('altitude') if gps_data else None,
+                latitude=latitude,
+                longitude=longitude,
+                altitude=altitude,
                 analysis_status='pending',
-                created_at=datetime.fromisoformat(timestamp) if timestamp else datetime.now()
+                captured_at=capture_time
             )
             
             db.add(capture_record)
