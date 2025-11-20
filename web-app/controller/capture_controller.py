@@ -252,6 +252,44 @@ def test_capture():
     }, 200
 
 
+@capture_blueprint.route('/api/capture/list', methods=['GET'])
+def list_captures():
+    """
+    Get all capture records for detection page
+    """
+    try:
+        db = SessionLocal()
+        try:
+            captures = db.query(CaptureRecord).order_by(CaptureRecord.captured_at.desc()).all()
+            
+            return {
+                'status': 'success',
+                'count': len(captures),
+                'captures': [{
+                    'id': c.id,
+                    'device_id': c.device_id,
+                    'original_image_url': c.original_image_url,
+                    'analyzed_image_url': c.analyzed_image_url,
+                    'person_count': c.person_count,
+                    'earth_person_count': c.earth_person_count,
+                    'sea_person_count': c.sea_person_count,
+                    'latitude': c.latitude,
+                    'longitude': c.longitude,
+                    'altitude': c.altitude,
+                    'analysis_status': c.analysis_status,
+                    'captured_at': c.captured_at.isoformat() if c.captured_at else None,
+                    'analyzed_at': c.analyzed_at.isoformat() if c.analyzed_at else None
+                } for c in captures]
+            }, 200
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"[CAPTURE API] Error listing captures: {str(e)}")
+        return {'status': 'error', 'message': str(e)}, 500
+
+
 # ============================================
 # WEBHOOK ENDPOINT
 # ============================================
@@ -262,6 +300,10 @@ def capture_webhook():
     Webhook endpoint called by AI service after analysis completes
     Receives: {capture_id, success, analyzed_image_url, person_count, earth_person_count, sea_person_count}
     """
+    logger.info(f"[WEBHOOK] ========== WEBHOOK CALLED ==========")
+    logger.info(f"[WEBHOOK] Request method: {request.method}")
+    logger.info(f"[WEBHOOK] Content-Type: {request.content_type}")
+    
     try:
         data = request.get_json()
         
@@ -295,14 +337,14 @@ def capture_webhook():
                 logger.info(f"[WEBHOOK] 💾 Updated capture ID {capture_id}")
                 logger.info(f"[WEBHOOK] 👥 Total: {record.person_count}, Earth: {record.earth_person_count}, Sea: {record.sea_person_count}")
                 
-                # Notify frontend via Socket.IO
+                # Notify frontend via Socket.IO (namespace required for broadcast)
                 socketio.emit('capture_analyzed', {
                     'capture_id': capture_id,
                     'analyzed_image_url': record.analyzed_image_url,
                     'person_count': record.person_count,
                     'earth_person_count': record.earth_person_count,
                     'sea_person_count': record.sea_person_count
-                }, broadcast=True)
+                }, namespace='/')
                 
                 logger.info(f"[WEBHOOK] 📡 Emitted capture_analyzed event to frontend")
                 

@@ -1,324 +1,330 @@
 {% extends "layout.html" %}
 
-{% block title %}Detection & Analysis{% endblock %}
+{% block title %}Capture Analysis{% endblock %}
 
 {% block head %}
 <style>
-    .checklist-container {
-        max-height: 400px;
-        overflow-y: auto;
-    }
-    
-    .item-list {
-        list-style: none;
-        padding: 0;
-    }
-    
-    .item-card {
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: var(--border-radius);
-        border: 1px solid var(--gray-100);
-        padding: 1rem;
-        margin-bottom: 0.5rem;
-        transition: all 0.3s ease;
-    }
-    
-    .item-card:hover {
-        background: rgba(0, 0, 0, 0.3);
-        transform: translateY(-1px);
-    }
-    
-    .item-card.selected {
-        border-color: var(--secondary-color);
-        background: rgba(0, 194, 255, 0.1);
-    }
-    
-    .detection-grid {
+    .capture-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 1rem;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1.5rem;
     }
     
-    .detection-card {
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: var(--border-radius);
-        border: 1px solid var(--gray-100);
+    .capture-card {
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
         overflow: hidden;
         transition: all 0.3s ease;
+        position: relative;
     }
     
-    .detection-card:hover {
-        transform: translateY(-2px);
+    .capture-card:hover {
+        transform: translateY(-5px);
         border-color: var(--secondary-color);
+        box-shadow: 0 8px 24px rgba(0, 194, 255, 0.2);
     }
     
-    .detection-image {
+    .capture-image-container {
+        position: relative;
         width: 100%;
         aspect-ratio: 16/9;
+        background: rgba(0, 0, 0, 0.5);
+    }
+    
+    .capture-image {
+        width: 100%;
+        height: 100%;
         object-fit: cover;
     }
     
-    .detection-info {
-        padding: 1rem;
-    }
-    
-    .detection-meta {
-        font-size: 0.9em;
-        color: var(--gray-300);
-    }
-    
-    .detection-confidence {
+    .analysis-badge {
         position: absolute;
-        top: 0.5rem;
-        right: 0.5rem;
-        background: rgba(0, 0, 0, 0.7);
-        padding: 0.25rem 0.5rem;
-        border-radius: 1rem;
-        font-size: 0.8em;
+        top: 10px;
+        right: 10px;
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        backdrop-filter: blur(10px);
     }
-
-    .recording-list {
-        list-style: none;
-        padding: 0;
+    
+    .analysis-badge.pending {
+        background: rgba(250, 173, 20, 0.9);
+        color: #000;
     }
-
-    .recording-item {
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: var(--border-radius);
-        border: 1px solid var(--gray-100);
-        padding: 1rem;
-        margin-bottom: 0.5rem;
-        transition: all 0.3s ease;
+    
+    .analysis-badge.completed {
+        background: rgba(82, 196, 26, 0.9);
+        color: #fff;
     }
-
-    .recording-item:hover {
-        background: rgba(0, 0, 0, 0.3);
+    
+    .analysis-badge.failed {
+        background: rgba(255, 77, 79, 0.9);
+        color: #fff;
     }
-
-    .recording-header {
+    
+    .capture-info {
+        padding: 1.25rem;
+    }
+    
+    .capture-meta {
         display: flex;
-        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1rem;
+        font-size: 0.85rem;
+        color: rgba(255, 255, 255, 0.6);
+    }
+    
+    .capture-meta-item {
+        display: flex;
         align-items: center;
-        margin-bottom: 0.5rem;
+        gap: 5px;
     }
-
-    .recording-meta {
-        font-size: 0.9em;
-        color: var(--gray-300);
+    
+    .person-count {
+        display: flex;
+        justify-content: space-around;
+        padding: 0.75rem;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 8px;
+        margin-bottom: 1rem;
     }
-
-    .detection-tag {
-        display: inline-block;
-        padding: 0.25rem 0.5rem;
-        border-radius: 1rem;
-        font-size: 0.8em;
-        margin-right: 0.5rem;
-        margin-bottom: 0.5rem;
-        background: rgba(255, 255, 255, 0.1);
+    
+    .count-item {
+        text-align: center;
     }
-
-    .detection-tag.high-conf {
-        background: rgba(82, 196, 26, 0.2);
-        color: #52c41a;
+    
+    .count-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--secondary-color);
     }
-
-    .detection-tag.med-conf {
-        background: rgba(250, 173, 20, 0.2);
-        color: #faad14;
+    
+    .count-label {
+        font-size: 0.75rem;
+        color: rgba(255, 255, 255, 0.6);
+        text-transform: uppercase;
     }
-
-    .detection-tag.low-conf {
-        background: rgba(255, 77, 79, 0.2);
-        color: #ff4d4f;
+    
+    .gps-info {
+        font-size: 0.8rem;
+        color: rgba(255, 255, 255, 0.5);
+        padding: 0.5rem;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 6px;
+    }
+    
+    .image-compare {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+    }
+    
+    .compare-item {
+        position: relative;
+        aspect-ratio: 16/9;
+        border-radius: 6px;
+        overflow: hidden;
+        cursor: pointer;
+    }
+    
+    .compare-item img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    
+    .compare-label {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 5px;
+        background: rgba(0, 0, 0, 0.8);
+        font-size: 0.7rem;
+        text-align: center;
+    }
+    
+    .stats-summary {
+        background: rgba(0, 0, 0, 0.3);
+        padding: 1.5rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+    }
+    
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1.5rem;
+    }
+    
+    .stat-box {
+        text-align: center;
+        padding: 1rem;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+    }
+    
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--secondary-color);
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        color: rgba(255, 255, 255, 0.6);
+        margin-top: 0.5rem;
+    }
+    
+    .filter-bar {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+    }
+    
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        color: rgba(255, 255, 255, 0.5);
+    }
+    
+    .empty-state i {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+        opacity: 0.3;
     }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="container-fluid py-4 mt-5">
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>
-                    <h2 class="mb-1">Detection & Analysis</h2>
-                    <p class="text-muted mb-0">AI-Powered Object Detection and Recording Analysis</p>
-                </div>
-                <div class="d-flex gap-3">
-                    <button class="btn btn-outline-light" onclick="refreshData()">
-                        <i class="fas fa-sync-alt me-2"></i>Refresh Results
-                    </button>
-                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addItemModal">
-                        <i class="fas fa-plus me-2"></i>Add Item
-                    </button>
-                </div>
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1"><i class="fas fa-camera-retro me-2"></i>Capture Analysis</h2>
+            <p class="text-muted mb-0">AI-Powered Person Detection & Counting</p>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-light" onclick="loadCaptures()">
+                <i class="fas fa-sync-alt me-2"></i>Refresh
+            </button>
+            <button class="btn btn-outline-light" onclick="exportData()">
+                <i class="fas fa-download me-2"></i>Export
+            </button>
+        </div>
+    </div>
+
+    <!-- Statistics Summary -->
+    <div class="stats-summary">
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-value" id="totalCaptures">0</div>
+                <div class="stat-label">Total Captures</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="totalPersons">0</div>
+                <div class="stat-label">Total Persons</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="earthPersons">0</div>
+                <div class="stat-label">On Land</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="seaPersons">0</div>
+                <div class="stat-label">In Water</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="analyzedCount">0</div>
+                <div class="stat-label">Analyzed</div>
             </div>
         </div>
     </div>
 
-    <div class="row">
-        <!-- Item Checklist -->
-        <div class="col-lg-3 mb-4">
-            <div class="card h-100">
-                <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-clipboard-list"></i> Item Checklist</h5>
-                        <div class="btn-group btn-group-sm">
-                            <button class="btn btn-outline-light" onclick="selectAllItems()">
-                                <i class="fas fa-check-double"></i>
-                            </button>
-                            <button class="btn btn-outline-light" onclick="clearSelection()">
-                                <i class="fas fa-times"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                <div class="card-body checklist-container">
-                    <ul class="item-list" id="itemList">
-                        <li class="item-card selected">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="item1" checked>
-                                    <label class="form-check-label" for="item1">First Aid Kit</label>
-                                </div>
-                                <span class="badge bg-success">Required</span>
-                            </div>
-                        </li>
-                        <li class="item-card">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="item2">
-                                    <label class="form-check-label" for="item2">Life Vest</label>
-                                </div>
-                                <span class="badge bg-warning">Optional</span>
-                            </div>
-                        </li>
-                        <!-- More items will be added dynamically -->
-                    </ul>
-                </div>
-                <div class="card-footer">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <small class="text-muted">2 of 5 items selected</small>
-                        <button class="btn btn-primary btn-sm" onclick="analyzeItems()">
-                            <i class="fas fa-search me-1"></i>Analyze
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
+    <!-- Filters -->
+    <div class="filter-bar">
+        <select class="form-select" style="max-width: 200px;" id="deviceFilter" onchange="applyFilters()">
+            <option value="">All Devices</option>
+        </select>
+        <select class="form-select" style="max-width: 200px;" id="statusFilter" onchange="applyFilters()">
+            <option value="">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+        </select>
+        <input type="date" class="form-control" style="max-width: 200px;" id="dateFilter" onchange="applyFilters()">
+    </div>
 
-        <!-- Detection Results -->
-        <div class="col-lg-5 mb-4">
-            <div class="card h-100">
-                <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-camera"></i> Detection Results</h5>
-                        <div class="btn-group btn-group-sm">
-                            <button class="btn btn-outline-light active">
-                                <i class="fas fa-th me-1"></i>Grid
-                            </button>
-                            <button class="btn btn-outline-light">
-                                <i class="fas fa-list me-1"></i>List
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div class="detection-grid">
-                        <div class="detection-card">
-                            <img src="path/to/detection1.jpg" class="detection-image" alt="Detection 1">
-                            <div class="detection-info">
-                                <div class="detection-confidence">
-                                    <i class="fas fa-chart-line text-success me-1"></i>95%
-                                </div>
-                                <h6 class="mb-2">First Aid Kit</h6>
-                                <div class="detection-meta">
-                                    <i class="far fa-clock me-1"></i>2 minutes ago
-                                </div>
-                            </div>
-                        </div>
-                        <!-- More detection results will be added dynamically -->
-                    </div>
-                </div>
-            </div>
-        </div>
+    <!-- Capture Grid -->
+    <div class="capture-grid" id="captureGrid">
+        <!-- Cards will be added dynamically -->
+    </div>
 
-        <!-- Recording Analysis -->
-        <div class="col-lg-4 mb-4">
-            <div class="card h-100">
-                <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-video"></i> Recording Analysis</h5>
-                        <button class="btn btn-outline-light btn-sm" onclick="exportResults()">
-                            <i class="fas fa-download me-1"></i>Export
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <ul class="recording-list">
-                        <li class="recording-item">
-                            <div class="recording-header">
-                                <h6 class="mb-0">Recording #127</h6>
-                                <small class="text-muted">10:30 AM</small>
-                            </div>
-                            <div class="recording-meta mb-2">
-                                <i class="far fa-clock me-1"></i>Duration: 2:30
-                                <i class="fas fa-tag ms-3 me-1"></i>5 detections
-                            </div>
-                            <div class="detection-tags">
-                                <span class="detection-tag high-conf">First Aid Kit (95%)</span>
-                                <span class="detection-tag med-conf">Life Vest (75%)</span>
-                            </div>
-                            <div class="mt-2">
-                                <button class="btn btn-sm btn-outline-light">
-                                    <i class="fas fa-play me-1"></i>Play
-                                </button>
-                            </div>
-                        </li>
-                        <!-- More recordings will be added dynamically -->
-                    </ul>
-                </div>
-            </div>
-        </div>
+    <!-- Empty State -->
+    <div class="empty-state" id="emptyState" style="display: none;">
+        <i class="fas fa-images"></i>
+        <h5>No Captures Yet</h5>
+        <p>Captures from drones will appear here</p>
     </div>
 </div>
 
-<!-- Add Item Modal -->
-<div class="modal fade" id="addItemModal" tabindex="-1">
-    <div class="modal-dialog">
+<!-- Image Modal -->
+<div class="modal fade" id="imageModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Add New Item</h5>
+                <h5 class="modal-title" id="modalTitle">Capture Details</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label">Item Name</label>
-                    <input type="text" class="form-control" id="itemName">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="mb-3">Original Image</h6>
+                        <img id="modalOriginalImage" class="w-100 rounded" style="max-height: 500px; object-fit: contain;">
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="mb-3">Analyzed Image</h6>
+                        <img id="modalAnalyzedImage" class="w-100 rounded" style="max-height: 500px; object-fit: contain;">
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Category</label>
-                    <select class="form-select" id="itemCategory">
-                        <option value="safety">Safety Equipment</option>
-                        <option value="medical">Medical Supplies</option>
-                        <option value="tools">Tools</option>
-                        <option value="other">Other</option>
-                    </select>
+                <div class="row mt-4">
+                    <div class="col-md-6">
+                        <h6 class="mb-3">Detection Results</h6>
+                        <table class="table table-dark table-sm">
+                            <tr>
+                                <td>Total Persons</td>
+                                <td id="modalTotalPersons">-</td>
+                            </tr>
+                            <tr>
+                                <td>On Land</td>
+                                <td id="modalEarthPersons">-</td>
+                            </tr>
+                            <tr>
+                                <td>In Water</td>
+                                <td id="modalSeaPersons">-</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="mb-3">GPS Location</h6>
+                        <table class="table table-dark table-sm">
+                            <tr>
+                                <td>Latitude</td>
+                                <td id="modalLatitude">-</td>
+                            </tr>
+                            <tr>
+                                <td>Longitude</td>
+                                <td id="modalLongitude">-</td>
+                            </tr>
+                            <tr>
+                                <td>Altitude</td>
+                                <td id="modalAltitude">-</td>
+                            </tr>
+                        </table>
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Priority</label>
-                    <select class="form-select" id="itemPriority">
-                        <option value="required">Required</option>
-                        <option value="optional">Optional</option>
-                    </select>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Notes</label>
-                    <textarea class="form-control" id="itemNotes" rows="3"></textarea>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="saveNewItem()">Add Item</button>
             </div>
         </div>
     </div>
@@ -327,82 +333,210 @@
 
 {% block scripts %}
 <script>
-// Item Checklist Management
-function selectAllItems() {
-    document.querySelectorAll('.item-list input[type="checkbox"]').forEach(checkbox => {
-        checkbox.checked = true;
-        checkbox.closest('.item-card').classList.add('selected');
-    });
-    updateItemCount();
-}
+let allCaptures = [];
+let filteredCaptures = [];
 
-function clearSelection() {
-    document.querySelectorAll('.item-list input[type="checkbox"]').forEach(checkbox => {
-        checkbox.checked = false;
-        checkbox.closest('.item-card').classList.remove('selected');
-    });
-    updateItemCount();
-}
-
-function updateItemCount() {
-    const total = document.querySelectorAll('.item-list input[type="checkbox"]').length;
-    const selected = document.querySelectorAll('.item-list input[type="checkbox"]:checked').length;
-    document.querySelector('.card-footer small').textContent = `${selected} of ${total} items selected`;
-}
-
-// Initialize checkboxes
+// Initialize
 document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('.item-list input[type="checkbox"]').forEach(checkbox => {
-        checkbox.addEventListener('change', function() {
-            this.closest('.item-card').classList.toggle('selected', this.checked);
-            updateItemCount();
-        });
+    loadCaptures();
+    
+    // Listen for new captures via Socket.IO
+    socket.on('capture_analyzed', function(data) {
+        console.log('📊 Capture analyzed:', data);
+        loadCaptures(); // Refresh list
     });
-    updateItemCount();
 });
 
-function saveNewItem() {
-    const itemName = document.getElementById('itemName').value;
-    const category = document.getElementById('itemCategory').value;
-    const priority = document.getElementById('itemPriority').value;
-    const notes = document.getElementById('itemNotes').value;
+// Load all captures from API
+async function loadCaptures() {
+    try {
+        const response = await fetch('/api/capture/list');
+        const data = await response.json();
+        
+        if (data.captures) {
+            allCaptures = data.captures;
+            filteredCaptures = [...allCaptures];
+            updateStatistics();
+            populateDeviceFilter();
+            renderCaptures();
+        }
+    } catch (error) {
+        console.error('Error loading captures:', error);
+    }
+}
 
-    const itemList = document.getElementById('itemList');
-    const newItem = document.createElement('li');
-    newItem.className = 'item-card';
-    newItem.innerHTML = `
-        <div class="d-flex justify-content-between align-items-center">
-            <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="item${Date.now()}">
-                <label class="form-check-label">${itemName}</label>
+// Update statistics
+function updateStatistics() {
+    const stats = allCaptures.reduce((acc, capture) => {
+        acc.total++;
+        acc.totalPersons += capture.person_count || 0;
+        acc.earthPersons += capture.earth_person_count || 0;
+        acc.seaPersons += capture.sea_person_count || 0;
+        if (capture.analysis_status === 'completed') acc.analyzed++;
+        return acc;
+    }, { total: 0, totalPersons: 0, earthPersons: 0, seaPersons: 0, analyzed: 0 });
+    
+    document.getElementById('totalCaptures').textContent = stats.total;
+    document.getElementById('totalPersons').textContent = stats.totalPersons;
+    document.getElementById('earthPersons').textContent = stats.earthPersons;
+    document.getElementById('seaPersons').textContent = stats.seaPersons;
+    document.getElementById('analyzedCount').textContent = stats.analyzed;
+}
+
+// Populate device filter
+function populateDeviceFilter() {
+    const devices = [...new Set(allCaptures.map(c => c.device_id))];
+    const filter = document.getElementById('deviceFilter');
+    filter.innerHTML = '<option value="">All Devices</option>';
+    devices.forEach(device => {
+        filter.innerHTML += `<option value="${device}">${device}</option>`;
+    });
+}
+
+// Apply filters
+function applyFilters() {
+    const deviceFilter = document.getElementById('deviceFilter').value;
+    const statusFilter = document.getElementById('statusFilter').value;
+    const dateFilter = document.getElementById('dateFilter').value;
+    
+    filteredCaptures = allCaptures.filter(capture => {
+        if (deviceFilter && capture.device_id !== deviceFilter) return false;
+        if (statusFilter && capture.analysis_status !== statusFilter) return false;
+        if (dateFilter) {
+            const captureDate = new Date(capture.captured_at).toISOString().split('T')[0];
+            if (captureDate !== dateFilter) return false;
+        }
+        return true;
+    });
+    
+    renderCaptures();
+}
+
+// Render capture cards
+function renderCaptures() {
+    const grid = document.getElementById('captureGrid');
+    const emptyState = document.getElementById('emptyState');
+    
+    if (filteredCaptures.length === 0) {
+        grid.innerHTML = '';
+        emptyState.style.display = 'block';
+        return;
+    }
+    
+    emptyState.style.display = 'none';
+    grid.innerHTML = filteredCaptures.map(capture => createCaptureCard(capture)).join('');
+}
+
+// Create capture card HTML
+function createCaptureCard(capture) {
+    const statusClass = capture.analysis_status === 'completed' ? 'completed' : 
+                       capture.analysis_status === 'failed' ? 'failed' : 'pending';
+    
+    const captureTime = new Date(capture.captured_at).toLocaleString();
+    const hasAnalysis = capture.analyzed_image_url;
+    
+    return `
+        <div class="capture-card" onclick='showCaptureModal(${JSON.stringify(capture)})'>
+            <div class="capture-image-container">
+                <img src="${capture.original_image_url}" class="capture-image" alt="Capture">
+                <span class="analysis-badge ${statusClass}">
+                    ${statusClass === 'completed' ? '✓ Analyzed' : 
+                      statusClass === 'failed' ? '✗ Failed' : '⏳ Processing'}
+                </span>
             </div>
-            <span class="badge bg-${priority === 'required' ? 'success' : 'warning'}">${priority}</span>
+            <div class="capture-info">
+                <div class="capture-meta">
+                    <div class="capture-meta-item">
+                        <i class="fas fa-drone"></i>
+                        ${capture.device_id}
+                    </div>
+                    <div class="capture-meta-item">
+                        <i class="far fa-clock"></i>
+                        ${new Date(capture.captured_at).toLocaleTimeString()}
+                    </div>
+                </div>
+                
+                ${hasAnalysis ? `
+                    <div class="person-count">
+                        <div class="count-item">
+                            <div class="count-value">${capture.person_count || 0}</div>
+                            <div class="count-label">Total</div>
+                        </div>
+                        <div class="count-item">
+                            <div class="count-value">${capture.earth_person_count || 0}</div>
+                            <div class="count-label">Land</div>
+                        </div>
+                        <div class="count-item">
+                            <div class="count-value">${capture.sea_person_count || 0}</div>
+                            <div class="count-label">Water</div>
+                        </div>
+                    </div>
+                    
+                    <div class="image-compare">
+                        <div class="compare-item">
+                            <img src="${capture.original_image_url}" alt="Original">
+                            <div class="compare-label">Original</div>
+                        </div>
+                        <div class="compare-item">
+                            <img src="${capture.analyzed_image_url}" alt="Analyzed">
+                            <div class="compare-label">Analyzed</div>
+                        </div>
+                    </div>
+                ` : '<p class="text-center text-muted py-3">Waiting for analysis...</p>'}
+                
+                ${capture.latitude && capture.longitude ? `
+                    <div class="gps-info mt-2">
+                        <i class="fas fa-map-marker-alt me-1"></i>
+                        ${capture.latitude.toFixed(6)}, ${capture.longitude.toFixed(6)}
+                    </div>
+                ` : ''}
+            </div>
         </div>
     `;
-
-    itemList.appendChild(newItem);
-    updateItemCount();
-
-    // Close modal and reset form
-    const modal = bootstrap.Modal.getInstance(document.getElementById('addItemModal'));
-    modal.hide();
-    document.getElementById('itemName').value = '';
-    document.getElementById('itemNotes').value = '';
 }
 
-function analyzeItems() {
-    // TODO: Implement AI analysis for selected items
-    console.log('Analyzing selected items...');
+// Show capture modal
+function showCaptureModal(capture) {
+    document.getElementById('modalTitle').textContent = `Capture #${capture.id} - ${capture.device_id}`;
+    document.getElementById('modalOriginalImage').src = capture.original_image_url;
+    document.getElementById('modalAnalyzedImage').src = capture.analyzed_image_url || capture.original_image_url;
+    
+    document.getElementById('modalTotalPersons').textContent = capture.person_count || 0;
+    document.getElementById('modalEarthPersons').textContent = capture.earth_person_count || 0;
+    document.getElementById('modalSeaPersons').textContent = capture.sea_person_count || 0;
+    
+    document.getElementById('modalLatitude').textContent = capture.latitude ? capture.latitude.toFixed(6) : 'N/A';
+    document.getElementById('modalLongitude').textContent = capture.longitude ? capture.longitude.toFixed(6) : 'N/A';
+    document.getElementById('modalAltitude').textContent = capture.altitude ? capture.altitude.toFixed(1) + 'm' : 'N/A';
+    
+    const modal = new bootstrap.Modal(document.getElementById('imageModal'));
+    modal.show();
 }
 
-function refreshData() {
-    // TODO: Refresh detection results and recordings
-    console.log('Refreshing data...');
-}
-
-function exportResults() {
-    // TODO: Export analysis results
-    console.log('Exporting results...');
+// Export data
+function exportData() {
+    const csv = [
+        ['ID', 'Device', 'Date', 'Time', 'Total Persons', 'Land', 'Water', 'Status', 'Latitude', 'Longitude'],
+        ...filteredCaptures.map(c => [
+            c.id,
+            c.device_id,
+            new Date(c.captured_at).toLocaleDateString(),
+            new Date(c.captured_at).toLocaleTimeString(),
+            c.person_count || 0,
+            c.earth_person_count || 0,
+            c.sea_person_count || 0,
+            c.analysis_status,
+            c.latitude || '',
+            c.longitude || ''
+        ])
+    ].map(row => row.join(',')).join('\n');
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `captures_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
 }
 </script>
 {% endblock %}
