@@ -138,12 +138,12 @@ def handle_capture_result(data):
 
 def trigger_ai_analysis(capture_id, image_url):
     """
-    Send image to AI service for analysis (runs in background thread)
-    Receives synchronous response with results
+    Send image to AI service for analysis (async with webhook callback)
+    AI service returns 200 OK immediately, processes in background, then calls webhook
     """
     db = SessionLocal()
     try:
-        logger.info(f"[CAPTURE AI] 🤖 Analyzing image for capture ID: {capture_id}")
+        logger.info(f"[CAPTURE AI] 🤖 Triggering AI analysis for capture ID: {capture_id}")
         logger.info(f"[CAPTURE AI] 📸 Image URL: {image_url}")
         
         # Update status to 'processing'
@@ -153,42 +153,25 @@ def trigger_ai_analysis(capture_id, image_url):
             db.commit()
             logger.info(f"[CAPTURE AI] 🔄 Status: processing")
         
-        # Send request to AI service (synchronous - wait for result)
-        payload = {'image_url': image_url}
+        # Send request to AI service (will return 200 OK immediately)
+        # Webhook URL is hardcoded in AI service
+        payload = {
+            'image_url': image_url,
+            'capture_id': capture_id
+        }
         
         logger.info(f"[CAPTURE AI] 📤 POST {AI_SERVICE_URL}/analyze")
+        
         response = requests.post(
             f"{AI_SERVICE_URL}/analyze",
             json=payload,
-            timeout=60  # Longer timeout for AI processing
+            timeout=10  # Short timeout - just to receive acceptance
         )
         
         if response.status_code == 200:
             result = response.json()
-            logger.info(f"[CAPTURE AI] ✅ Analysis complete")
-            logger.info(f"[CAPTURE AI] Result: {result}")
-            
-            # Update record with results
-            record.analyzed_image_url = result.get('analyzed_image_url')
-            record.person_count = result.get('person_count', 0)
-            record.earth_person_count = result.get('earth_person_count', 0)
-            record.sea_person_count = result.get('sea_person_count', 0)
-            record.analysis_status = 'completed'
-            record.analyzed_at = datetime.now()
-            db.commit()
-            
-            logger.info(f"[CAPTURE AI] 💾 Updated capture ID {capture_id}")
-            logger.info(f"[CAPTURE AI] 👥 Total: {record.person_count}, Earth: {record.earth_person_count}, Sea: {record.sea_person_count}")
-            
-            # Notify frontend via Socket.IO
-            socketio.emit('capture_analyzed', {
-                'capture_id': capture_id,
-                'analyzed_image_url': record.analyzed_image_url,
-                'person_count': record.person_count,
-                'earth_person_count': record.earth_person_count,
-                'sea_person_count': record.sea_person_count
-            }, broadcast=True)
-            
+            logger.info(f"[CAPTURE AI] ✅ Request accepted by AI service")
+            logger.info(f"[CAPTURE AI] Response: {result}")
         else:
             logger.error(f"[CAPTURE AI] ❌ AI service error: {response.status_code}")
             logger.error(f"[CAPTURE AI] Response: {response.text}")
@@ -196,7 +179,7 @@ def trigger_ai_analysis(capture_id, image_url):
             db.commit()
                 
     except requests.exceptions.Timeout:
-        logger.error(f"[CAPTURE AI] ⏱️ Timeout (60s exceeded)")
+        logger.error(f"[CAPTURE AI] ⏱️ Timeout waiting for AI service acceptance")
         record = db.query(CaptureRecord).filter(CaptureRecord.id == capture_id).first()
         if record:
             record.analysis_status = 'failed'
@@ -217,6 +200,84 @@ def trigger_ai_analysis(capture_id, image_url):
             db.commit()
     finally:
         db.close()
+
+
+# ============================================
+# WEBHOOK ENDPOINT
+# ============================================
+
+@capture_blueprint.route('/api/capture/webhook', methods=['POST'])
+def capture_webhook():
+    """
+    Webhook endpoint called by AI service after analysis completes
+    Receives: {capture_id, success, analyzed_image_url, person_count, earth_person_count, sea_person_count}
+    """
+    try:
+        data = request.get_json()
+        
+        logger.info(f"[WEBHOOK] 📥 Received callback from AI service")
+        logger.info(f"[WEBHOOK] Data: {data}")
+        
+        capture_id = data.get('capture_id')
+        success = data.get('success', False)
+        
+        if not capture_id:
+            logger.error("[WEBHOOK] ❌ Missing capture_id")
+            return {'status': 'error', 'message': 'capture_id required'}, 400
+        
+        db = SessionLocal()
+        try:
+            record = db.query(CaptureRecord).filter(CaptureRecord.id == capture_id).first()
+            
+            if not record:
+                logger.error(f"[WEBHOOK] ❌ Capture ID {capture_id} not found")
+                return {'status': 'error', 'message': 'Capture not found'}, 404
+            
+            if success:
+                # Update with AI results
+                record.analyzed_image_url = data.get('analyzed_image_url')
+                record.person_count = data.get('person_count', 0)
+                record.earth_person_count = data.get('earth_person_count', 0)
+                record.sea_person_count = data.get('sea_person_count', 0)
+                record.analysis_status = 'completed'
+                record.analyzed_at = datetime.now()
+                
+                logger.info(f"[WEBHOOK] 💾 Updated capture ID {capture_id}")
+                logger.info(f"[WEBHOOK] 👥 Total: {record.person_count}, Earth: {record.earth_person_count}, Sea: {record.sea_person_count}")
+                
+                # Notify frontend via Socket.IO
+                socketio.emit('capture_analyzed', {
+                    'capture_id': capture_id,
+                    'analyzed_image_url': record.analyzed_image_url,
+                    'person_count': record.person_count,
+                    'earth_person_count': record.earth_person_count,
+                    'sea_person_count': record.sea_person_count
+                }, broadcast=True)
+                
+                logger.info(f"[WEBHOOK] 📡 Emitted capture_analyzed event to frontend")
+                
+            else:
+                # Analysis failed
+                error_msg = data.get('error', 'Unknown error')
+                logger.error(f"[WEBHOOK] ❌ Analysis failed: {error_msg}")
+                record.analysis_status = 'failed'
+            
+            db.commit()
+            
+            return {
+                'status': 'success',
+                'message': 'Webhook processed',
+                'capture_id': capture_id
+            }, 200
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"[WEBHOOK] ❌ Error processing webhook: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {'status': 'error', 'message': str(e)}, 500
 
 
 # ============================================
