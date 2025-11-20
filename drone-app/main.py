@@ -35,6 +35,10 @@ import io
 import cloudinary
 import cloudinary.uploader
 
+CLOUD_NAME="de8dmh7iq"
+CLOUD_API_KEY="878738396278587"
+CLOUD_API_SECRET="TvLHcRpcWaA4Vl1zmjOl23lc9rY"
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -900,9 +904,9 @@ async def capture_command(data):
         try:
             # Cloudinary config
             cloudinary.config(
-                cloud_name="dpvt5pxln",
-                api_key="756332772729963",
-                api_secret="T0xGIeRvdAzDVH1MqFy6iBIeVFg",
+                cloud_name=CLOUD_NAME,
+                api_key=CLOUD_API_KEY,
+                api_secret=CLOUD_API_SECRET,
                 secure=True
             )
             

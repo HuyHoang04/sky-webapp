@@ -20,6 +20,10 @@ AI_SERVICE_URL = os.getenv('AI_IMAGE_SERVICE_URL', 'http://localhost:8000')
 # Create blueprint
 capture_blueprint = Blueprint('capture', __name__)
 
+logger.info("=" * 60)
+logger.info("🎯 CAPTURE CONTROLLER LOADED")
+logger.info("=" * 60)
+
 
 # ============================================
 # SOCKET.IO HANDLERS
@@ -31,6 +35,9 @@ def handle_capture_request(data):
     Handle capture request from dashboard/frontend
     Forward command to drone device via Socket.IO
     """
+    logger.warning("=" * 80)
+    logger.warning("🚨 CAPTURE_REQUEST HANDLER CALLED!")
+    logger.warning("=" * 80)
     try:
         device_id = data.get('device_id', 'drone-camera')
         
@@ -200,6 +207,21 @@ def trigger_ai_analysis(capture_id, image_url):
             db.commit()
     finally:
         db.close()
+
+
+# ============================================
+# TEST ENDPOINT
+# ============================================
+
+@capture_blueprint.route('/api/capture/test', methods=['GET'])
+def test_capture():
+    """Test endpoint to verify capture controller is working"""
+    logger.info("🧪 Test endpoint called!")
+    return {
+        'status': 'success',
+        'message': 'Capture controller is working!',
+        'timestamp': datetime.now().isoformat()
+    }, 200
 
 
 # ============================================

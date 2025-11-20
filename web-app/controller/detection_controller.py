@@ -7,6 +7,11 @@ logger = logging.getLogger(__name__)
 
 detection_blueprint = Blueprint('detection', __name__)
 
+# Throttle detection broadcasts
+import time
+last_broadcast_time = {}
+BROADCAST_INTERVAL = 0.5  # Minimum 0.5 seconds between broadcasts per device
+
 # Socket.IO event handler for detection results from drone
 @socketio.on('detection_result')
 def handle_detection_result(data):
@@ -17,8 +22,15 @@ def handle_detection_result(data):
         sea_count = data.get('sea_person_count', 0)
         total_count = data.get('person_count', 0)
         
-        # Log chi tiết để debug
-        logger.info(f"📥 RECEIVED detection_result from drone: device={device_id}, earth={earth_count}, sea={sea_count}, total={total_count}")
+        # Throttle broadcasts - only broadcast if enough time has passed
+        current_time = time.time()
+        last_time = last_broadcast_time.get(device_id, 0)
+        
+        if current_time - last_time < BROADCAST_INTERVAL:
+            # Skip this broadcast - too soon
+            return
+        
+        last_broadcast_time[device_id] = current_time
         
         # Prepare broadcast data
         broadcast_data = {
@@ -31,9 +43,9 @@ def handle_detection_result(data):
             'gps': data.get('gps')
         }
         
-        # Broadcast to all connected clients (no 'broadcast' parameter needed in Flask-SocketIO)
+        # Broadcast to all connected clients
         socketio.emit('detection_update', broadcast_data)
-        logger.info(f"📤 BROADCASTED detection_update to all clients: earth={earth_count}, sea={sea_count}, total={total_count}")
+        logger.debug(f"📤 Detection update: earth={earth_count}, sea={sea_count}, total={total_count}")
         
     except Exception as e:
         logger.error(f"❌ Error handling detection result: {e}", exc_info=True)

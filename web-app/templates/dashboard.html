@@ -362,6 +362,20 @@
     // Debug: Log socket connection status
     socket.on('connect', function() {
         console.log('✅ Socket.IO connected! ID:', socket.id);
+        
+        // Test capture_request handler
+        console.log('🧪 Testing capture_request emission...');
+        
+        // Add test function to window for manual testing in console
+        window.testCapture = function() {
+            console.log('🧪 Manual test capture triggered');
+            socket.emit('capture_request', {
+                device_id: 'test-device',
+                timestamp: new Date().toISOString()
+            });
+            console.log('✅ Test capture_request emitted');
+        };
+        console.log('💡 Type window.testCapture() in console to test manually');
     });
     
     socket.on('disconnect', function() {
@@ -729,10 +743,13 @@
 
     // Capture high-quality image directly from drone camera (independent of WebRTC)
     async function captureCurrentFrame() {
+        console.log('🎬 captureCurrentFrame() called');
         try {
             // Get device ID from current video source
             const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
             
+            console.log('📸 Device ID:', deviceId);
+            console.log('📸 Socket connected:', socket.connected);
             console.log('📸 Sending capture request for device:', deviceId);
             
             // Disable button while processing
@@ -916,9 +933,22 @@
     });
 
     // Capture button handler
-    captureButton.addEventListener('click', function() {
-        captureCurrentFrame();
-    });
+    if (captureButton) {
+        console.log('✅ Found capture button:', captureButton);
+        captureButton.addEventListener('click', function(event) {
+            console.log('🔘 Capture button clicked! Event:', event);
+            alert('Capture button clicked!');
+            captureCurrentFrame();
+        });
+        console.log('✅ Capture button event listener registered');
+    } else {
+        console.error('❌ Capture button not found! Searching for it...');
+        const allButtons = document.querySelectorAll('button');
+        console.log('All buttons on page:', allButtons);
+        allButtons.forEach(btn => {
+            if (btn.id) console.log('Button ID:', btn.id);
+        });
+    }
 
     // Fullscreen button handler
     fullscreenButton.addEventListener('click', function() {
