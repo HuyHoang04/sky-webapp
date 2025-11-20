@@ -113,6 +113,11 @@ def register_video_device(data):
         logger.info(f"[VIDEO] Registering video device: {device_id}")
         logger.debug(f"[VIDEO] Device data: {data}")
         
+        # Join room để nhận targeted messages (capture_command, etc)
+        from flask_socketio import join_room
+        join_room(device_id)
+        logger.info(f"[VIDEO] 🔗 Device {device_id} joined room: {device_id}")
+        
         stream = VideoStream(
             device_id=device_id,
             stream_url=data.get('stream_url'),

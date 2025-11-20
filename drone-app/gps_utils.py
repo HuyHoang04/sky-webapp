@@ -3,9 +3,13 @@ import serial_asyncio
 import pynmea2
 from datetime import datetime
 import logging
+import random
 
 
 logger = logging.getLogger("drone-client")
+
+# Mock GPS flag - set True if no hardware GPS module
+USE_MOCK_GPS = True
 
 
 async def read_gps(serial_port="/dev/ttyAMA3", baudrate=9600):

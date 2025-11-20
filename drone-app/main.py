@@ -35,6 +35,10 @@ import io
 import cloudinary
 import cloudinary.uploader
 
+CLOUD_NAME="de8dmh7iq"
+CLOUD_API_KEY="878738396278587"
+CLOUD_API_SECRET="TvLHcRpcWaA4Vl1zmjOl23lc9rY"
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -682,22 +686,6 @@ async def webrtc_answer(data):
             # After setting remote description, add any buffered ICE candidates
             global pending_remote_ice
             if pending_remote_ice:
-                logger.debug(f"Adding {len(pending_remote_ice)} buffered remote ICE candidates")
-                
-                for cand in pending_remote_ice:
-                        try:
-                            # Parse buffered candidates using RTCIceCandidate.from_sdp
-                            if isinstance(cand, dict):
-                                sdp_candidate = cand.get('candidate', '')
-                                
-                                if sdp_candidate and sdp_candidate.startswith('candidate:'):
-                                    # Use RTCIceCandidate's from_sdp method
-                                    ice_candidate = RTCIceCandidate.from_sdp(sdp_candidate)
-                                    ice_candidate.sdpMid = cand.get('sdpMid')
-                                    ice_candidate.sdpMLineIndex = cand.get('sdpMLineIndex')
-                                    await peer_connection.addIceCandidate(ice_candidate)
-                                else:
-                                    logger.warning(f'Buffered candidate has invalid format: {sdp_candidate[:50] if sdp_candidate else "empty"}')
                 logger.info(f"🔄 [DRONE] Adding {len(pending_remote_ice)} buffered remote ICE candidates")
                 for cand in pending_remote_ice:
                         try:
@@ -783,22 +771,7 @@ async def webrtc_ice_candidate(data):
             return
 
         try:
-            # aiortc expects RTCIceCandidate objects created from SDP
-            if isinstance(candidate_payload, dict):
-                sdp_candidate = candidate_payload.get('candidate', '')
-                
-                if sdp_candidate and sdp_candidate.startswith('candidate:'):
-                    # Use RTCIceCandidate's from_sdp class method
-                    ice_candidate = RTCIceCandidate.from_sdp(sdp_candidate)
-                    ice_candidate.sdpMid = candidate_payload.get('sdpMid')
-                    ice_candidate.sdpMLineIndex = candidate_payload.get('sdpMLineIndex')
-                    
-                    await peer_connection.addIceCandidate(ice_candidate)
-                    logger.debug('Added remote ICE candidate')
-                else:
-                    logger.warning(f'ICE candidate has invalid format: {sdp_candidate[:50] if sdp_candidate else "empty"}')
-            # aiortc expects RTCIceCandidate object, not dict
-            # Parse candidate string manually
+            # Parse candidate string manually (aiortc doesn't have from_sdp method)
             if isinstance(candidate_payload, dict):
                 candidate_str = candidate_payload.get('candidate')
                 sdp_mid = candidate_payload.get('sdpMid')
@@ -931,9 +904,9 @@ async def capture_command(data):
         try:
             # Cloudinary config
             cloudinary.config(
-                cloud_name="dpvt5pxln",
-                api_key="756332772729963",
-                api_secret="T0xGIeRvdAzDVH1MqFy6iBIeVFg",
+                cloud_name=CLOUD_NAME,
+                api_key=CLOUD_API_KEY,
+                api_secret=CLOUD_API_SECRET,
                 secure=True
             )
             

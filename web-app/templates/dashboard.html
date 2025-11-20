@@ -362,6 +362,20 @@
     // Debug: Log socket connection status
     socket.on('connect', function() {
         console.log('✅ Socket.IO connected! ID:', socket.id);
+        
+        // Test capture_request handler
+        console.log('🧪 Testing capture_request emission...');
+        
+        // Add test function to window for manual testing in console
+        window.testCapture = function() {
+            console.log('🧪 Manual test capture triggered');
+            socket.emit('capture_request', {
+                device_id: 'test-device',
+                timestamp: new Date().toISOString()
+            });
+            console.log('✅ Test capture_request emitted');
+        };
+        console.log('💡 Type window.testCapture() in console to test manually');
     });
     
     socket.on('disconnect', function() {
@@ -729,10 +743,13 @@
 
     // Capture high-quality image directly from drone camera (independent of WebRTC)
     async function captureCurrentFrame() {
+        console.log('🎬 captureCurrentFrame() called');
         try {
             // Get device ID from current video source
             const deviceId = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || 'drone-camera';
             
+            console.log('📸 Device ID:', deviceId);
+            console.log('📸 Socket connected:', socket.connected);
             console.log('📸 Sending capture request for device:', deviceId);
             
             // Disable button while processing
@@ -916,9 +933,22 @@
     });
 
     // Capture button handler
-    captureButton.addEventListener('click', function() {
-        captureCurrentFrame();
-    });
+    if (captureButton) {
+        console.log('✅ Found capture button:', captureButton);
+        captureButton.addEventListener('click', function(event) {
+            console.log('🔘 Capture button clicked! Event:', event);
+            alert('Capture button clicked!');
+            captureCurrentFrame();
+        });
+        console.log('✅ Capture button event listener registered');
+    } else {
+        console.error('❌ Capture button not found! Searching for it...');
+        const allButtons = document.querySelectorAll('button');
+        console.log('All buttons on page:', allButtons);
+        allButtons.forEach(btn => {
+            if (btn.id) console.log('Button ID:', btn.id);
+        });
+    }
 
     // Fullscreen button handler
     fullscreenButton.addEventListener('click', function() {
@@ -1056,6 +1086,47 @@
             streamStatus.textContent = 'Ready';
             streamStatus.className = 'badge bg-success';
         }, 5000);
+    });
+    
+    // Listen for AI analysis complete
+    socket.on('capture_analyzed', function(data) {
+        console.log('🤖 AI Analysis complete:', data);
+        
+        // Update status
+        streamStatus.textContent = 'Phân tích hoàn tất!';
+        streamStatus.className = 'badge bg-info';
+        
+        // Update person counts with analyzed data
+        if (data.person_count !== undefined) {
+            document.getElementById('totalPersonCount').textContent = data.person_count || 0;
+        }
+        if (data.earth_person_count !== undefined) {
+            document.getElementById('earthPersonCount').textContent = data.earth_person_count || 0;
+        }
+        if (data.sea_person_count !== undefined) {
+            document.getElementById('seaPersonCount').textContent = data.sea_person_count || 0;
+        }
+        
+        // Show notification with analyzed image
+        if (window.Notification && Notification.permission === 'granted') {
+            new Notification('Phân tích AI hoàn tất', {
+                body: `Tổng: ${data.person_count || 0} người\nĐất: ${data.earth_person_count || 0}, Biển: ${data.sea_person_count || 0}`,
+                icon: '/static/images/ai-icon.png'
+            });
+        }
+        
+        // Optional: Display analyzed image in a modal or side panel
+        if (data.analyzed_image_url) {
+            console.log('📸 Analyzed image URL:', data.analyzed_image_url);
+            // TODO: You can add code here to display the analyzed image
+            // Example: Open in modal, update thumbnail, etc.
+        }
+        
+        // Reset status after 3 seconds
+        setTimeout(() => {
+            streamStatus.textContent = 'Ready';
+            streamStatus.className = 'badge bg-success';
+        }, 3000);
     });
 </script>
 {% endblock %}
