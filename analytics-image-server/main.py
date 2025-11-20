@@ -11,6 +11,10 @@ from fastapi import FastAPI, UploadFile, File, Form, Body
 from fastapi.responses import JSONResponse
 from ultralytics import YOLO
 import uvicorn
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # ============= CLOUDINARY =============
 import tempfile
