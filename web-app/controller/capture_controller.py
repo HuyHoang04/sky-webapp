@@ -44,14 +44,14 @@ def handle_capture_request(data):
             'timestamp': data.get('timestamp'),
             'quality': 95
         }
-        logger.info(f"[WEBAPP] 📤 Emitting capture_command to room '{device_id}' with data: {command_data}")
+        logger.info(f"[WEBAPP]  Emitting capture_command to room '{device_id}' with data: {command_data}")
         
         socketio.emit('capture_command', command_data, to=device_id)
         
-        logger.info(f"[WEBAPP] ✅ Capture command emitted to room: {device_id}")
+        logger.info(f"[WEBAPP]  Capture command emitted to room: {device_id}")
         
     except Exception as e:
-        logger.error(f"[CAPTURE] ❌ Error handling capture request: {str(e)}")
+        logger.error(f"[CAPTURE]  Error handling capture request: {str(e)}")
         emit('capture_error', {'error': str(e)})
 
 
@@ -65,11 +65,11 @@ def handle_capture_result(data):
         device_id = data.get('device_id')
         success = data.get('success', False)
         
-        logger.info(f"[CAPTURE] 📥 Received capture result from {device_id}, success: {success}")
+        logger.info(f"[CAPTURE]  Received capture result from {device_id}, success: {success}")
         
         if not success:
             error_msg = data.get('error', 'Unknown error')
-            logger.error(f"[CAPTURE] ❌ Capture failed: {error_msg}")
+            logger.error(f"[CAPTURE]  Capture failed: {error_msg}")
             emit('capture_error', {'device_id': device_id, 'error': error_msg}, broadcast=True)
             return
         
@@ -107,10 +107,10 @@ def handle_capture_result(data):
                 daemon=True
             )
             analysis_thread.start()
-            logger.info(f"[CAPTURE] 🤖 Started AI analysis thread for capture ID: {capture_record.id}")
+            logger.info(f"[CAPTURE]  Started AI analysis thread for capture ID: {capture_record.id}")
             
         except Exception as db_error:
-            logger.error(f"[CAPTURE] ❌ Database error: {str(db_error)}")
+            logger.error(f"[CAPTURE]  Database error: {str(db_error)}")
             db.rollback()
             emit('capture_error', {'device_id': device_id, 'error': f'Database save failed: {str(db_error)}'}, broadcast=True)
             return
@@ -126,10 +126,10 @@ def handle_capture_result(data):
             'timestamp': timestamp
         }, broadcast=True)
         
-        logger.info(f"[CAPTURE] ✅ Capture processed and saved successfully")
+        logger.info(f"[CAPTURE]  Capture processed and saved successfully")
         
     except Exception as e:
-        logger.error(f"[CAPTURE] ❌ Error handling capture result: {str(e)}")
+        logger.error(f"[CAPTURE]  Error handling capture result: {str(e)}")
 
 
 # ============================================
@@ -143,15 +143,15 @@ def trigger_ai_analysis(capture_id, image_url):
     """
     db = SessionLocal()
     try:
-        logger.info(f"[CAPTURE AI] 🤖 Triggering AI analysis for capture ID: {capture_id}")
-        logger.info(f"[CAPTURE AI] 📸 Image URL: {image_url}")
+        logger.info(f"[CAPTURE AI]  Triggering AI analysis for capture ID: {capture_id}")
+        logger.info(f"[CAPTURE AI]  Image URL: {image_url}")
         
         # Update status to 'processing'
         record = db.query(CaptureRecord).filter(CaptureRecord.id == capture_id).first()
         if record:
             record.analysis_status = 'processing'
             db.commit()
-            logger.info(f"[CAPTURE AI] 🔄 Status: processing")
+            logger.info(f"[CAPTURE AI]  Status: processing")
         
         # Send request to AI service (will return 200 OK immediately)
         # Webhook URL is hardcoded in AI service
@@ -160,7 +160,7 @@ def trigger_ai_analysis(capture_id, image_url):
             'capture_id': capture_id
         }
         
-        logger.info(f"[CAPTURE AI] 📤 POST {AI_SERVICE_URL}/analyze")
+        logger.info(f"[CAPTURE AI]  POST {AI_SERVICE_URL}/analyze")
         
         response = requests.post(
             f"{AI_SERVICE_URL}/analyze",
@@ -170,28 +170,28 @@ def trigger_ai_analysis(capture_id, image_url):
         
         if response.status_code == 200:
             result = response.json()
-            logger.info(f"[CAPTURE AI] ✅ Request accepted by AI service")
+            logger.info(f"[CAPTURE AI]  Request accepted by AI service")
             logger.info(f"[CAPTURE AI] Response: {result}")
         else:
-            logger.error(f"[CAPTURE AI] ❌ AI service error: {response.status_code}")
+            logger.error(f"[CAPTURE AI]  AI service error: {response.status_code}")
             logger.error(f"[CAPTURE AI] Response: {response.text}")
             record.analysis_status = 'failed'
             db.commit()
                 
     except requests.exceptions.Timeout:
-        logger.error(f"[CAPTURE AI] ⏱️ Timeout waiting for AI service acceptance")
+        logger.error(f"[CAPTURE AI]  Timeout waiting for AI service acceptance")
         record = db.query(CaptureRecord).filter(CaptureRecord.id == capture_id).first()
         if record:
             record.analysis_status = 'failed'
             db.commit()
     except requests.exceptions.ConnectionError:
-        logger.error(f"[CAPTURE AI] 🔌 Cannot connect to {AI_SERVICE_URL}")
+        logger.error(f"[CAPTURE AI]  Cannot connect to {AI_SERVICE_URL}")
         record = db.query(CaptureRecord).filter(CaptureRecord.id == capture_id).first()
         if record:
             record.analysis_status = 'failed'
             db.commit()
     except Exception as e:
-        logger.error(f"[CAPTURE AI] ❌ Error: {str(e)}")
+        logger.error(f"[CAPTURE AI]  Error: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
         record = db.query(CaptureRecord).filter(CaptureRecord.id == capture_id).first()
@@ -215,7 +215,7 @@ def capture_webhook():
     try:
         data = request.get_json()
         
-        logger.info(f"[WEBHOOK] 📥 Received callback from AI service")
+        logger.info(f"[WEBHOOK]  Received callback from AI service")
         logger.info(f"[WEBHOOK] Data: {data}")
         
         capture_id = data.get('capture_id')
