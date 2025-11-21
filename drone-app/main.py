@@ -123,38 +123,54 @@ async def create_peer_connection():
     # Log connection state changes
     @peer_connection.on("connectionstatechange")
     async def on_connectionstatechange():
+        global webrtc_restart_count, last_restart_time
         state = peer_connection.connectionState
         logger.info(f"PeerConnection state: {state}")
         
-        if state == "failed" or state == "closed":
-            # Connection failed, try to restart
-            logger.warning("WebRTC connection failed or closed, will attempt to restart")
-            await asyncio.sleep(1)
+        if state == "failed":
+            # Connection failed, try to restart with rate limiting
+            now = time.time()
+            if now - last_restart_time < 30:  # At least 30s between restarts
+                webrtc_restart_count += 1
+                if webrtc_restart_count > 3:
+                    logger.error(f"⚠️ Too many WebRTC failures ({webrtc_restart_count}), stopping auto-restart. Manual intervention needed.")
+                    return
+            else:
+                webrtc_restart_count = 0
+            
+            logger.warning(f"WebRTC connection failed, will attempt restart (attempt #{webrtc_restart_count + 1})")
+            await asyncio.sleep(2)
             await restart_webrtc()
+        elif state == "closed":
+            logger.info("WebRTC connection closed (manual or graceful shutdown)")
     
     # Log ICE connection state changes
     @peer_connection.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
+        global webrtc_restart_count
         state = peer_connection.iceConnectionState
-        logger.info(f"ICE connection state: {state}")
+        logger.info(f"🔌 ICE connection state: {state}")
         
         # ✅ Ensure AI detection starts AFTER ICE connection is established
-        if state == "connected" and video_track:
-            logger.info("🎯 ICE CONNECTED - AI detection should now be processing frames")
-            # Log detection worker status
-            if hasattr(video_track, 'detection_thread') and video_track.detection_thread:
+        if state == "connected" or state == "completed":
+            logger.info("🎯 ICE CONNECTED - Video stream active, AI detection running")
+            webrtc_restart_count = 0  # Reset restart counter on success
+            
+            # Verify detection worker status
+            if video_track and hasattr(video_track, 'detection_thread') and video_track.detection_thread:
                 is_alive = video_track.detection_thread.is_alive()
-                logger.info(f"🤖 AI detection worker thread status: {'RUNNING ✅' if is_alive else 'STOPPED ❌'}")
-                if not is_alive:
-                    logger.error("⚠️ AI detection worker thread is NOT running! Restarting...")
-                    # Restart detection thread
+                logger.info(f"🤖 AI detection worker: {'RUNNING ✅' if is_alive else 'STOPPED ❌'}")
+                if not is_alive and video_track.running:
+                    logger.error("⚠️ Detection thread stopped! Restarting...")
                     video_track.detection_thread = threading.Thread(target=video_track._detection_worker, daemon=True)
                     video_track.detection_thread.start()
-                    logger.info("✅ AI detection worker thread restarted")
-            else:
-                logger.warning("⚠️ Video track has no detection thread!")
-        elif state == "failed" or state == "disconnected":
-            logger.warning(f"ICE connection {state} - detection may stop")
+                    logger.info("✅ Detection worker restarted")
+        elif state == "checking":
+            logger.info("🔍 ICE checking connectivity...")
+        elif state == "disconnected":
+            logger.warning("⚠️ ICE disconnected (may reconnect automatically)")
+        elif state == "failed":
+            logger.error("❌ ICE connection failed")
     
     # Log ICE gathering state changes
     @peer_connection.on("icegatheringstatechange")
@@ -168,14 +184,19 @@ async def create_peer_connection():
             logger.debug(f"Generated local ICE candidate: {candidate.candidate}")
     
     # Add video track if webcam is available
+    global video_track
     if webcam:
-        # Create a new video track or reuse existing one
-        if not video_track:
+        # CRITICAL: Reuse existing video track to prevent camera stop issues
+        if not video_track or not video_track.running:
+            logger.info("Creating new video track")
             video_track = ObjectDetectionStreamTrack(webcam, DEFAULT_FPS, DEFAULT_WIDTH, DEFAULT_HEIGHT, ort_session, detection_interval=DEFAULT_DETECTION_FRAME_INTERVAL)
+        else:
+            logger.info("Reusing existing video track")
+        
         # Capture the sender so we can tune RTP encoding parameters (bitrate/framerate)
         try:
             sender = peer_connection.addTrack(video_track)
-            logger.info("Added video track to peer connection")
+            logger.info("✅ Added video track to peer connection")
 
             # Configure RTP encoding using configurable parameters
             try:
@@ -479,7 +500,9 @@ async def detection_publisher_loop(sio_client, webcam, ort_session, video_track_
     try:
         while True:
             try:
+                # Check connection status before processing
                 if not sio_client.connected:
+                    logger.debug("Socket not connected, waiting...")
                     await asyncio.sleep(1.0)
                     continue
 
@@ -491,11 +514,13 @@ async def detection_publisher_loop(sio_client, webcam, ort_session, video_track_
                     if hasattr(video_track_ref, 'detection_lock'):
                         with video_track_ref.detection_lock:
                             detections = video_track_ref.cached_detections.copy() if video_track_ref.cached_detections else []
+                            logger.debug(f"🔒 Locked cache read: {len(detections)} detections")
                     else:
                         detections = video_track_ref.cached_detections.copy() if video_track_ref.cached_detections else []
+                        logger.debug(f"⚠️ Unlocked cache read: {len(detections)} detections")
                     
                     if detections:
-                        logger.debug(f"Using {len(detections)} detections from video_track cache")
+                        logger.debug(f"📦 Using {len(detections)} detections from video_track cache")
                 else:
                     logger.debug("No video_track reference, skipping detection publish")
                 
@@ -503,24 +528,39 @@ async def detection_publisher_loop(sio_client, webcam, ort_session, video_track_
                 earth_person_count = sum(1 for d in detections if d.get('class') == 0)
                 sea_person_count = sum(1 for d in detections if d.get('class') == 1)
                 total_person_count = earth_person_count + sea_person_count
+                
+                logger.debug(f"📊 Counted from {len(detections)} detections: earth={earth_person_count}, sea={sea_person_count}, total={total_person_count}")
 
+                # Prepare payload - limit detections to avoid oversized packets
                 payload = {
                     'device_id': device_id,
                     'timestamp': datetime.utcnow().isoformat() + 'Z',
                     'earth_person_count': earth_person_count,
                     'sea_person_count': sea_person_count,
                     'person_count': total_person_count,
-                    'detections': [{'bbox': d['bbox'], 'class': d['class'], 'score': d['score']} for d in detections[:20]],
+                    'detections': [{'bbox': d['bbox'], 'class': d['class'], 'score': d['score']} for d in detections[:20]],  # Max 20 detections
                     'gps': latest_gps,
                 }
+                
+                # Double-check connection before emit (avoid race condition)
+                if not sio_client.connected:
+                    logger.warning("Socket disconnected before emit, skipping...")
+                    await asyncio.sleep(1.0)
+                    continue
+                
                 try:
-                    await sio_client.emit('detection_result', payload)
+                    # Emit with timeout protection
+                    await asyncio.wait_for(sio_client.emit('detection_result', payload), timeout=2.0)
                     if total_person_count > 0:
                         logger.info(f"📊 Published detection: earth={earth_person_count}, sea={sea_person_count}, total={total_person_count}")
                     else:
                         logger.debug(f"Published detection: no objects detected")
-                except Exception as e:
-                    logger.debug(f"Failed to emit detection_result: {e}")
+                except asyncio.TimeoutError:
+                    logger.warning("Detection emit timeout (2s), socket may be slow")
+                except Exception as emit_error:
+                    logger.warning(f"Failed to emit detection_result: {emit_error}")
+                    # Don't crash the loop, just log and continue
+                    await asyncio.sleep(0.5)
 
             except asyncio.CancelledError:
                 break
@@ -673,72 +713,78 @@ async def stop_webrtc(data):
 @sio.event
 async def webrtc_answer(data):
     """Handle WebRTC answer from server"""
+    global peer_connection
     try:
-        # Ensure we have a usable peer connection; recreate if needed
-        if not peer_connection or getattr(peer_connection, 'connectionState', None) in ('closed', 'failed'):
-            logger.debug('PeerConnection missing or closed/failed when receiving answer; creating a new one')
-            await create_peer_connection()
+        # Check if peer connection exists
+        if not peer_connection:
+            logger.error('No peer connection exists when receiving answer - ignoring')
+            return
+        
+        # Check connection state
+        conn_state = getattr(peer_connection, 'connectionState', None)
+        if conn_state in ('closed', 'failed'):
+            logger.warning(f'PeerConnection is {conn_state} when receiving answer - ignoring to prevent loop')
+            return
 
-        if peer_connection:
-            answer = RTCSessionDescription(sdp=data['sdp'], type=data['type'])
-            await peer_connection.setRemoteDescription(answer)
-            logger.info("WebRTC answer received and set successfully")
-            # After setting remote description, add any buffered ICE candidates
-            global pending_remote_ice
-            if pending_remote_ice:
-                logger.info(f"🔄 [DRONE] Adding {len(pending_remote_ice)} buffered remote ICE candidates")
-                for cand in pending_remote_ice:
-                        try:
-                            # Parse and add buffered candidate
-                            if isinstance(cand, dict):
-                                candidate_str = cand.get('candidate')
-                                sdp_mid = cand.get('sdpMid')
-                                sdp_mline_index = cand.get('sdpMLineIndex')
-                                
-                                parts = candidate_str.split()
-                                foundation = parts[0].split(':')[1]
-                                component = int(parts[1])
-                                protocol = parts[2]
-                                priority = int(parts[3])
-                                ip = parts[4]
-                                port = int(parts[5])
-                                typ = parts[7]
-                                
-                                related_address = None
-                                related_port = None
-                                i = 8
-                                while i < len(parts):
-                                    if parts[i] == 'raddr' and i + 1 < len(parts):
-                                        related_address = parts[i + 1]
-                                        i += 2
-                                    elif parts[i] == 'rport' and i + 1 < len(parts):
-                                        related_port = int(parts[i + 1])
-                                        i += 2
-                                    else:
-                                        i += 1
-                                
-                                rtc_cand = RTCIceCandidate(
-                                    component=component,
-                                    foundation=foundation,
-                                    ip=ip,
-                                    port=port,
-                                    priority=priority,
-                                    protocol=protocol,
-                                    type=typ,
-                                    relatedAddress=related_address,
-                                    relatedPort=related_port,
-                                    sdpMid=sdp_mid,
-                                    sdpMLineIndex=sdp_mline_index
-                                )
-                                await peer_connection.addIceCandidate(rtc_cand)
+        # Set remote description
+        answer = RTCSessionDescription(sdp=data['sdp'], type=data['type'])
+        await peer_connection.setRemoteDescription(answer)
+        logger.info("✅ WebRTC answer received and set successfully")
+        
+        # After setting remote description, add any buffered ICE candidates
+        global pending_remote_ice
+        if pending_remote_ice:
+            logger.info(f"🔄 [DRONE] Adding {len(pending_remote_ice)} buffered remote ICE candidates")
+            for cand in pending_remote_ice:
+                try:
+                    # Parse and add buffered candidate
+                    if isinstance(cand, dict):
+                        candidate_str = cand.get('candidate')
+                        sdp_mid = cand.get('sdpMid')
+                        sdp_mline_index = cand.get('sdpMLineIndex')
+                        
+                        parts = candidate_str.split()
+                        foundation = parts[0].split(':')[1]
+                        component = int(parts[1])
+                        protocol = parts[2]
+                        priority = int(parts[3])
+                        ip = parts[4]
+                        port = int(parts[5])
+                        typ = parts[7]
+                        
+                        related_address = None
+                        related_port = None
+                        i = 8
+                        while i < len(parts):
+                            if parts[i] == 'raddr' and i + 1 < len(parts):
+                                related_address = parts[i + 1]
+                                i += 2
+                            elif parts[i] == 'rport' and i + 1 < len(parts):
+                                related_port = int(parts[i + 1])
+                                i += 2
                             else:
-                                await peer_connection.addIceCandidate(cand)
-                            logger.info(f"✅ [DRONE] Added buffered ICE candidate")
-                        except Exception as e:
-                            logger.error(f"❌ [DRONE] Failed to add buffered ICE candidate: {e}")
-                pending_remote_ice = []
-        else:
-            logger.error("Received webrtc_answer but no peer connection exists")
+                                i += 1
+                        
+                        rtc_cand = RTCIceCandidate(
+                            component=component,
+                            foundation=foundation,
+                            ip=ip,
+                            port=port,
+                            priority=priority,
+                            protocol=protocol,
+                            type=typ,
+                            relatedAddress=related_address,
+                            relatedPort=related_port,
+                            sdpMid=sdp_mid,
+                            sdpMLineIndex=sdp_mline_index
+                        )
+                        await peer_connection.addIceCandidate(rtc_cand)
+                    else:
+                        await peer_connection.addIceCandidate(cand)
+                    logger.info(f"✅ [DRONE] Added buffered ICE candidate")
+                except Exception as e:
+                    logger.error(f"❌ [DRONE] Failed to add buffered ICE candidate: {e}")
+            pending_remote_ice = []
     except Exception as e:
         # If answer cannot be applied because signaling state is stable (race), log and skip restart
         msg = str(e)

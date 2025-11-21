@@ -36,59 +36,63 @@ class WebRTCClient {
             if (data.device_id !== this.deviceId) return;
             
             try {
-                console.log('Nhận WebRTC offer từ drone');
+                console.log('📥 Nhận WebRTC offer từ drone');
                 this.statusCallback('offer_received');
+                
                 // If we're already confirmed connected, ignore duplicate offers
                 if (this.connectedConfirmed) {
-                    console.debug('Already connectedConfirmed; ignoring incoming offer');
+                    console.debug('Already connected; ignoring duplicate offer');
                     return;
                 }
-                // If signaling state is not stable, reset to avoid "Called in wrong state: stable" errors
-                if (this.peerConnection && this.peerConnection.signalingState && this.peerConnection.signalingState !== 'stable') {
-                    console.warn('Signaling state not stable (', this.peerConnection.signalingState, '); resetting peer connection before applying offer');
-                    try {
-                        this.stop();
-                    } catch (e) {
-                        console.debug('Error while stopping peerConnection during offer handling', e);
+                
+                // If we have a peer connection, check its state
+                if (this.peerConnection) {
+                    const state = this.peerConnection.signalingState;
+                    // If we're in stable state, we can accept a new offer
+                    // If we're in have-remote-offer, we can also accept (will replace)
+                    // Otherwise, close and recreate
+                    if (state !== 'stable' && state !== 'have-remote-offer') {
+                        console.warn('Signaling state not ready for offer:', state, '- closing and recreating');
+                        this.peerConnection.close();
+                        this.peerConnection = null;
                     }
-                    await this.createPeerConnection();
                 }
                 
-                // Đảm bảo peer connection đã được khởi tạo
+                // Create peer connection if needed
                 if (!this.peerConnection || this.peerConnection.connectionState === 'closed') {
                     await this.createPeerConnection();
                 }
                 
-                // Nhận offer từ drone và tạo answer
+                // Set remote description (the offer from drone)
                 const remoteDesc = new RTCSessionDescription({
                     sdp: data.sdp,
                     type: data.type
                 });
                 
                 await this.peerConnection.setRemoteDescription(remoteDesc);
-                console.log('Đã thiết lập remote description từ offer');
+                console.log('✅ Đã thiết lập remote description từ offer');
                 
-                // Thêm các ICE candidates đã lưu trữ (nếu có)
+                // Add any buffered ICE candidates
                 await this.addStoredIceCandidates();
                 
-                // Tạo answer
+                // Create and send answer
                 const answer = await this.peerConnection.createAnswer();
                 await this.peerConnection.setLocalDescription(answer);
                 
-                // Gửi answer về server để chuyển đến drone
+                // Send answer back to drone via server
                 this.socket.emit('webrtc_answer', {
                     device_id: this.deviceId,
                     sdp: this.peerConnection.localDescription.sdp,
                     type: this.peerConnection.localDescription.type
                 });
                 
-                console.log('Đã gửi WebRTC answer đến drone');
+                console.log('📤 Đã gửi WebRTC answer đến drone');
                 this.statusCallback('answer_sent');
                 
-                // Thiết lập timeout cho kết nối
+                // Set connection timeout
                 this.setConnectionTimeout();
             } catch (error) {
-                console.error('Lỗi khi xử lý offer:', error);
+                console.error('❌ Lỗi khi xử lý offer:', error);
                 this.statusCallback('error', error.message);
                 this.handleConnectionFailure();
             }
@@ -99,18 +103,30 @@ class WebRTCClient {
             if (data.device_id !== this.deviceId) return;
             
             try {
-                console.log('Nhận ICE candidate từ drone');
+                const candidate = data.candidate;
                 
+                if (!candidate) {
+                    console.debug('Received empty ICE candidate (end-of-candidates)');
+                    return;
+                }
+                
+                // Check if we can add the candidate now
                 if (this.peerConnection && this.peerConnection.remoteDescription) {
-                    await this.peerConnection.addIceCandidate(data.candidate);
-                    console.log('Đã thêm ICE candidate');
+                    try {
+                        await this.peerConnection.addIceCandidate(candidate);
+                        console.log('✅ Đã thêm ICE candidate');
+                    } catch (error) {
+                        console.warn('Failed to add ICE candidate:', error);
+                        // Buffer it anyway
+                        this.iceCandidates.push(candidate);
+                    }
                 } else {
-                    // Lưu trữ ICE candidate để thêm sau
-                    this.iceCandidates.push(data.candidate);
-                    console.log('Đã lưu ICE candidate để xử lý sau');
+                    // Buffer ICE candidate to add after setting remote description
+                    this.iceCandidates.push(candidate);
+                    console.log('💾 Đã lưu ICE candidate (remote description chưa sẵn sàng)');
                 }
             } catch (error) {
-                console.error('Lỗi khi xử lý ICE candidate:', error);
+                console.error('❌ Lỗi khi xử lý ICE candidate:', error);
             }
         });
     }
@@ -119,14 +135,22 @@ class WebRTCClient {
      * Thêm các ICE candidates đã lưu trữ vào peer connection
      */
     async addStoredIceCandidates() {
-        if (this.peerConnection && this.peerConnection.remoteDescription) {
+        if (this.peerConnection && this.peerConnection.remoteDescription && this.iceCandidates.length > 0) {
+            console.log(`📦 Adding ${this.iceCandidates.length} buffered ICE candidates`);
+            let successCount = 0;
+            let failCount = 0;
+            
             for (const candidate of this.iceCandidates) {
                 try {
                     await this.peerConnection.addIceCandidate(candidate);
+                    successCount++;
                 } catch (error) {
-                    console.error('Lỗi khi thêm ICE candidate đã lưu trữ:', error);
+                    console.warn('Failed to add buffered ICE candidate:', error);
+                    failCount++;
                 }
             }
+            
+            console.log(`✅ Added ${successCount}/${this.iceCandidates.length} buffered ICE candidates (${failCount} failed)`);
             this.iceCandidates = [];
         }
     }
@@ -159,58 +183,52 @@ class WebRTCClient {
         // Xử lý khi nhận được track từ drone
         this.peerConnection.ontrack = (event) => {
             if (event.streams && event.streams[0]) {
-                console.log('Đã nhận video track từ drone');
-                // Ensure the element is muted to allow autoplay in modern browsers
-                try {
-                    this.videoElement.muted = true;
-                    this.videoElement.setAttribute('muted', '');
-                } catch (e) {
-                    // ignore
-                }
-
+                console.log('📹 Đã nhận video track từ drone');
+                
+                // Ensure the element is muted to allow autoplay
+                this.videoElement.muted = true;
+                this.videoElement.setAttribute('muted', '');
+                this.videoElement.setAttribute('autoplay', '');
+                this.videoElement.setAttribute('playsinline', '');
+                
+                // Set the stream
                 this.videoElement.srcObject = event.streams[0];
-
-                // Debug: log track info
-                try {
-                    const tracks = event.streams[0].getVideoTracks();
-                    console.log(`Stream video tracks count: ${tracks.length}`);
-                    tracks.forEach((t, i) => console.log(`Track[${i}]: id=${t.id}, kind=${t.kind}`));
-                } catch (e) {
-                    console.debug('Could not enumerate tracks:', e);
-                }
-
-                // Attach playback event handlers for debugging
+                
+                // Log track info
+                const tracks = event.streams[0].getVideoTracks();
+                console.log(`📊 Video tracks: ${tracks.length}`);
+                tracks.forEach((t, i) => {
+                    console.log(`  Track ${i}: ${t.kind} (id: ${t.id}, enabled: ${t.enabled})`);
+                });
+                
+                // Handle video events
+                this.videoElement.onloadedmetadata = () => {
+                    console.log('📺 Video metadata loaded');
+                    // Auto-play when metadata is ready
+                    this.videoElement.play()
+                        .then(() => console.log('▶️ Video playing successfully'))
+                        .catch(e => console.warn('⚠️ Auto-play blocked:', e.message));
+                };
+                
                 this.videoElement.onplaying = () => {
-                    console.log('Video element playing');
-                    // Confirm connection only when playback truly starts
+                    console.log('✅ Video element is now playing');
+                    // Confirm connection when playback starts
                     this.connectedConfirmed = true;
                     this.isConnected = true;
                     this.reconnectAttempts = 0;
-                    // Clear only the timer for this attempt
                     this.clearConnectionTimeout();
+                    this.statusCallback('playing');
                 };
-                this.videoElement.onpause = () => console.log('Video element paused');
-                this.videoElement.onerror = (ev) => console.error('Video element error', ev);
-
-                // Try to play when metadata is loaded; set muted before play to avoid NotAllowedError
-                this.videoElement.onloadedmetadata = () => {
-                    // Some browsers still block autoplay; ensure we try to play but catch errors
-                    this.videoElement.play().then(() => {
-                        console.log('play() succeeded');
-                    }).catch(e => {
-                        console.warn('Không thể tự động phát video:', e);
-                    });
+                
+                this.videoElement.onpause = () => {
+                    console.log('⏸️ Video paused');
                 };
-
-                // Make video element visually obvious during debugging
-                try {
-                    this.videoElement.style.border = '2px solid lime';
-                } catch (e) {}
+                
+                this.videoElement.onerror = (ev) => {
+                    console.error('❌ Video element error:', ev);
+                };
                 
                 this.statusCallback('track_received');
-                
-                // Note: final confirmation and clearing of timeout happens in onplaying handler
-                // Keep basic state updated here
                 this.isConnected = true;
                 this.reconnectAttempts = 0;
             }
@@ -218,37 +236,63 @@ class WebRTCClient {
         
         // Xử lý khi trạng thái kết nối thay đổi
         this.peerConnection.onconnectionstatechange = () => {
-            console.log('Trạng thái kết nối:', this.peerConnection.connectionState);
+            const state = this.peerConnection.connectionState;
+            console.log('🔄 Connection state:', state);
             
-            if (this.peerConnection.connectionState === 'connected') {
+            if (state === 'connected') {
                 this.isConnected = true;
-                this.reconnectAttempts = 0; // Reset số lần thử kết nối lại
-                this.statusCallback('connected');
-                // Mark confirmed when PC reaches connected as a stronger signal
+                this.reconnectAttempts = 0;
                 this.connectedConfirmed = true;
-                console.debug('PeerConnection connected; setting connectedConfirmed=true, currentAttempt:', this.currentAttempt);
+                this.statusCallback('connected');
                 this.clearConnectionTimeout();
-            } else if (this.peerConnection.connectionState === 'disconnected') {
+                console.log('✅ WebRTC connection established');
+            } else if (state === 'connecting') {
+                console.log('🔗 WebRTC connecting...');
+                this.statusCallback('connecting');
+            } else if (state === 'disconnected') {
+                console.warn('⚠️ WebRTC disconnected');
                 this.isConnected = false;
                 this.statusCallback('disconnected');
-                // Thử kết nối lại sau một khoảng thời gian
-                setTimeout(() => this.handleConnectionFailure(), this.reconnectDelay);
-            } else if (this.peerConnection.connectionState === 'failed' ||
-                       this.peerConnection.connectionState === 'closed') {
+                // Wait a bit before trying to reconnect (might be temporary)
+                setTimeout(() => {
+                    if (this.peerConnection && this.peerConnection.connectionState === 'disconnected') {
+                        console.log('🔄 Still disconnected, attempting recovery...');
+                        this.handleConnectionFailure();
+                    }
+                }, 5000);
+            } else if (state === 'failed') {
+                console.error('❌ WebRTC connection failed');
                 this.isConnected = false;
                 this.statusCallback('connection_failed');
                 this.handleConnectionFailure();
+            } else if (state === 'closed') {
+                console.log('🔒 WebRTC connection closed');
+                this.isConnected = false;
+                this.statusCallback('closed');
             }
         };
         
         // Xử lý khi ICE connection state thay đổi
         this.peerConnection.oniceconnectionstatechange = () => {
-            console.log('ICE connection state:', this.peerConnection.iceConnectionState);
+            const state = this.peerConnection.iceConnectionState;
+            console.log('🧊 ICE connection state:', state);
             
-            if (this.peerConnection.iceConnectionState === 'disconnected' ||
-                this.peerConnection.iceConnectionState === 'failed') {
-                // Thử kết nối lại nếu ICE connection thất bại
-                setTimeout(() => this.handleConnectionFailure(), this.reconnectDelay);
+            if (state === 'connected' || state === 'completed') {
+                console.log('✅ ICE connection established');
+            } else if (state === 'checking') {
+                console.log('🔍 ICE connectivity checks in progress...');
+            } else if (state === 'disconnected') {
+                console.warn('⚠️ ICE connection disconnected');
+                // Wait before reconnecting (might recover)
+                setTimeout(() => {
+                    if (this.peerConnection && this.peerConnection.iceConnectionState === 'disconnected') {
+                        console.log('🔄 ICE still disconnected after 5s, attempting recovery...');
+                        this.handleConnectionFailure();
+                    }
+                }, 5000);
+            } else if (state === 'failed') {
+                console.error('❌ ICE connection failed');
+                this.handleConnectionFailure();
             }
         };
         
@@ -370,34 +414,24 @@ class WebRTCClient {
 
         // If already confirmed connected, don't set a timeout
         if (this.connectedConfirmed || (this.peerConnection && this.peerConnection.connectionState === 'connected')) {
-            console.debug('Connection already active/confirmed; skipping connection timeout');
+            console.debug('✅ Connection already active/confirmed; skipping connection timeout');
             return;
         }
 
-        // If the video element is already playing, skip creating a timeout (avoid false positives)
-        try {
-            if (this.videoElement && !this.videoElement.paused && this.videoElement.readyState >= 3) {
-                console.debug('Video element already playing; skipping connection timeout');
-                return;
-            }
-        } catch (e) {
-            // ignore cross-origin or other errors when checking element state
-        }
-
-        // Save the timer id and log for debugging races. Capture attempt id to avoid clearing someone else's timer.
+        // Save the timer id and log for debugging races
         const attemptId = this.currentAttempt;
         const timerId = setTimeout(() => {
             // If this attempt has already been confirmed, skip
             if (this.currentAttempt !== attemptId || this.connectedConfirmed) {
-                console.debug('Timeout fired for stale attempt or already confirmed; skipping', {attemptId, currentAttempt: this.currentAttempt, connectedConfirmed: this.connectedConfirmed});
+                console.debug('⏭️ Timeout fired for stale attempt or already confirmed; skipping');
                 return;
             }
-            console.warn('Kết nối WebRTC timeout sau', this.connectionTimeout, 'ms', 'attemptId:', attemptId);
+            console.warn('⏱️ Kết nối WebRTC timeout sau', this.connectionTimeout / 1000, 'giây');
             this.statusCallback('connection_timeout');
             this.handleConnectionFailure();
         }, this.connectionTimeout);
         this.connectionTimer = timerId;
-        console.debug('Connection timeout set (ms):', this.connectionTimeout, 'timerId:', this.connectionTimer, 'attemptId:', attemptId);
+        console.debug('⏱️ Connection timeout set:', this.connectionTimeout / 1000, 'seconds');
     }
     
     /**
@@ -405,7 +439,7 @@ class WebRTCClient {
      */
     clearConnectionTimeout() {
         if (this.connectionTimer) {
-            console.debug('Clearing connection timeout, timerId:', this.connectionTimer, 'connectedConfirmed:', this.connectedConfirmed, 'currentAttempt:', this.currentAttempt);
+            console.debug('⏹️ Clearing connection timeout');
             clearTimeout(this.connectionTimer);
             this.connectionTimer = null;
         }

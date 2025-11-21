@@ -79,11 +79,17 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
         last_log_time = time.time()
         while self.running:
             try:
-                # Check if there's a frame to process
+                # Get LATEST frame from queue (skip older frames to avoid lag)
                 frame_to_process = None
+                discarded_count = 0
                 with self.detection_lock:
                     if self.detection_queue:
-                        frame_to_process = self.detection_queue.pop(0)
+                        # CRITICAL FIX: Only process the LATEST frame, discard older ones
+                        discarded_count = len(self.detection_queue) - 1
+                        frame_to_process = self.detection_queue[-1]  # Get last (newest)
+                        self.detection_queue.clear()  # Clear all queued frames
+                        if discarded_count > 0:
+                            logger.debug(f"⚡ Processing latest frame, discarded {discarded_count} older frames")
                 
                 if frame_to_process is not None:
                     frame_count += 1
@@ -94,9 +100,17 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
                     
                     inference_time = (time.time() - start_time) * 1000  # ms
                     
+                    # DEBUG: Log detection counts before caching
+                    earth_count = sum(1 for d in detections if d.get('class') == 0)
+                    sea_count = sum(1 for d in detections if d.get('class') == 1)
+                    logger.debug(f"🔍 Before cache: {len(detections)} total (earth={earth_count}, sea={sea_count})")
+                    
                     # Update cached detections
                     with self.detection_lock:
                         self.cached_detections = detections
+                        # Verify cache after update
+                        cached_count = len(self.cached_detections)
+                        logger.debug(f"✅ Cache updated: {cached_count} detections stored")
                     
                     # Log every 5 seconds
                     if time.time() - last_log_time > 5.0:
