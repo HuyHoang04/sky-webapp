@@ -1,0 +1,873 @@
+// Khởi tạo kết nối Socket.IO và gán global để video-layout.js dùng
+window.socket = io();
+
+// Debug: Log socket connection status
+socket.on("connect", function () {
+  console.log("✅ Socket.IO connected! ID:", socket.id);
+
+  // Test capture_request handler
+  console.log("🧪 Testing capture_request emission...");
+
+  // Add test function to window for manual testing in console
+  window.testCapture = function () {
+    console.log("🧪 Manual test capture triggered");
+    socket.emit("capture_request", {
+      device_id: "test-device",
+      timestamp: new Date().toISOString(),
+    });
+    console.log("✅ Test capture_request emitted");
+  };
+  console.log("💡 Type window.testCapture() in console to test manually");
+});
+
+socket.on("disconnect", function () {
+  console.log("❌ Socket.IO disconnected!");
+});
+
+socket.on("connect_error", function (error) {
+  console.error("❌ Socket.IO connection error:", error);
+});
+
+// Khởi tạo bản đồ
+let map = L.map("map").setView([21.0285, 105.8542], 13);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+}).addTo(map);
+
+// Markers cho các thiết bị
+const markers = {};
+
+// Load danh sách video streams từ API
+async function loadVideoStreams() {
+  try {
+    const response = await fetch("/api/video/streams");
+    const streams = await response.json();
+
+    const videoSourceList = document.getElementById("videoSourceList");
+    videoSourceList.innerHTML = ""; // Clear existing items
+
+    for (const [deviceId, stream] of Object.entries(streams)) {
+      const listItem = document.createElement("li");
+      const deviceName =
+        stream.device_name ||
+        deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
+      listItem.innerHTML = `<a class="dropdown-item" href="#" data-device-id="${deviceId}">${deviceName}</a>`;
+      videoSourceList.appendChild(listItem);
+
+      // Thêm marker cho bản đồ
+      if (!markers[deviceId]) {
+        markers[deviceId] = L.marker([21.0285, 105.8542], {
+          icon: L.divIcon({
+            className: "custom-div-icon",
+            html: '<div style="background-color: #007bff; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white;"></div>',
+            iconSize: [15, 15],
+            iconAnchor: [7, 7],
+          }),
+        })
+          .addTo(map)
+          .bindPopup(`${deviceName} (${deviceId})`);
+      }
+    }
+
+    // Thêm event listeners cho các item mới
+    document.querySelectorAll("#videoSourceList a").forEach((item) => {
+      item.addEventListener("click", function (e) {
+        e.preventDefault();
+        const deviceId = this.getAttribute("data-device-id");
+        const deviceName = this.textContent;
+        document.getElementById("videoSourceDropdown").textContent = deviceName;
+
+        // Dừng stream hiện tại nếu có
+        if (peerConnection) {
+          peerConnection.close();
+          peerConnection = null;
+          videoElement.srcObject = null;
+        }
+
+        // Bắt đầu stream mới
+        startWebRTC(deviceId);
+      });
+    });
+
+    // Set device đầu tiên làm mặc định
+    const firstDevice = document.querySelector(
+      "#videoSourceList a[data-device-id]"
+    );
+    if (
+      firstDevice &&
+      !document
+        .getElementById("videoSourceDropdown")
+        .getAttribute("data-device-id")
+    ) {
+      const deviceId = firstDevice.getAttribute("data-device-id");
+      const deviceName = firstDevice.textContent;
+      document.getElementById("videoSourceDropdown").textContent = deviceName;
+      document
+        .getElementById("videoSourceDropdown")
+        .setAttribute("data-device-id", deviceId);
+    }
+  } catch (error) {
+    console.error("Lỗi khi load danh sách video streams:", error);
+  }
+}
+
+// Load danh sách GPS data từ API
+async function loadGPSData() {
+  try {
+    const response = await fetch("/api/gps");
+    const gpsData = await response.json();
+
+    const gpsTable = document.getElementById("gpsDataTable");
+    gpsTable.innerHTML = ""; // Clear existing rows
+
+    for (const [deviceId, data] of Object.entries(gpsData)) {
+      const row = document.createElement("tr");
+      const deviceName =
+        data.device_name ||
+        deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
+      const timestamp = new Date(data.timestamp).toLocaleTimeString();
+
+      row.innerHTML = `
+                    <td>${deviceName}</td>
+                    <td id="${deviceId}-lat">${data.latitude.toFixed(6)}</td>
+                    <td id="${deviceId}-lng">${data.longitude.toFixed(6)}</td>
+                    <td id="${deviceId}-alt">${data.altitude}m</td>
+                    <td id="${deviceId}-speed">${data.speed} km/h</td>
+                    <td id="${deviceId}-time">${timestamp}</td>
+                `;
+      gpsTable.appendChild(row);
+
+      // Cập nhật marker trên bản đồ
+      if (markers[deviceId]) {
+        markers[deviceId].setLatLng([data.latitude, data.longitude]);
+        markers[deviceId]
+          .getPopup()
+          .setContent(
+            `${deviceName}<br>Độ cao: ${data.altitude}m<br>Tốc độ: ${data.speed} km/h`
+          );
+      }
+    }
+  } catch (error) {
+    console.error("Lỗi khi load GPS data:", error);
+  }
+}
+
+// Map control functions
+function centerMap() {
+  // Center the map on the active drone
+  const activeDrone = Object.values(markers)[0];
+  if (activeDrone) {
+    map.setView(activeDrone.getLatLng(), map.getZoom());
+  }
+}
+
+function toggleMapLayer() {
+  // Toggle between different map layers (satellite, terrain, etc.)
+  const currentLayer = map.hasLayer(satelliteLayer);
+  if (currentLayer) {
+    map.removeLayer(satelliteLayer);
+    map.addLayer(streetLayer);
+  } else {
+    map.removeLayer(streetLayer);
+    map.addLayer(satelliteLayer);
+  }
+}
+
+function zoomIn() {
+  map.setZoom(map.getZoom() + 1);
+}
+
+function zoomOut() {
+  map.setZoom(map.getZoom() - 1);
+}
+
+// Initialize map layers
+const streetLayer = L.tileLayer(
+  "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  {
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }
+);
+
+const satelliteLayer = L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  {
+    attribution:
+      "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
+  }
+);
+
+// Set default layer
+streetLayer.addTo(map);
+
+// Load dữ liệu ban đầu
+loadVideoStreams();
+loadGPSData();
+// Update flight time display every second
+function updateFlightTime() {
+  const el = document.getElementById("flightTime");
+  if (!el) return;
+  const now = new Date();
+  // Use locale time string for human-readable format
+  el.textContent = now.toLocaleTimeString();
+}
+updateFlightTime();
+setInterval(updateFlightTime, 1000);
+
+// Listen for detection updates via Socket.IO
+socket.on("detection_update", function (data) {
+  console.log("📊 Received detection update:", data);
+
+  // Update person counts with animation
+  const earthEl = document.getElementById("earthPersonCount");
+  const seaEl = document.getElementById("seaPersonCount");
+  const totalEl = document.getElementById("totalPersonCount");
+
+  if (!earthEl || !seaEl || !totalEl) {
+    console.error("❌ Detection count elements not found!");
+    return;
+  }
+
+  const earthCount = data.earth_person_count || 0;
+  const seaCount = data.sea_person_count || 0;
+  const totalCount = data.person_count || 0;
+
+  // Update with visual feedback
+  earthEl.textContent = earthCount;
+  seaEl.textContent = seaCount;
+  totalEl.textContent = totalCount;
+
+  console.log(
+    `✅ Updated UI: Earth=${earthCount}, Sea=${seaCount}, Total=${totalCount}`
+  );
+
+  // Add pulse effect when count changes
+  if (totalCount > 0) {
+    earthEl.style.animation = "pulse 0.3s";
+    seaEl.style.animation = "pulse 0.3s";
+    totalEl.style.animation = "pulse 0.3s";
+    setTimeout(() => {
+      earthEl.style.animation = "";
+      seaEl.style.animation = "";
+      totalEl.style.animation = "";
+    }, 300);
+  }
+});
+
+// Test function to manually trigger detection update
+function testDetectionUpdate() {
+  console.log("🧪 Testing detection update...");
+
+  // Method 1: Call server test endpoint
+  fetch("/api/test_detection", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      console.log("✅ Server test response:", data);
+    })
+    .catch((error) => {
+      console.error("❌ Server test failed:", error);
+    });
+
+  // Method 2: Also test local update
+  const testData = {
+    device_id: "test",
+    earth_person_count: Math.floor(Math.random() * 10),
+    sea_person_count: Math.floor(Math.random() * 10),
+    person_count: 0,
+    timestamp: new Date().toISOString(),
+  };
+  testData.person_count =
+    testData.earth_person_count + testData.sea_person_count;
+
+  // Update UI directly for immediate feedback
+  document.getElementById("earthPersonCount").textContent =
+    testData.earth_person_count;
+  document.getElementById("seaPersonCount").textContent =
+    testData.sea_person_count;
+  document.getElementById("totalPersonCount").textContent =
+    testData.person_count;
+
+  console.log("✅ Local test data:", testData);
+}
+
+// Xử lý khi nhận dữ liệu GPS mới
+socket.on("gps_update", function (data) {
+  console.log("Nhận dữ liệu GPS:", data);
+
+  const deviceId = data.device_id;
+  const deviceName =
+    data.device_name || deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
+  const timestamp = new Date(data.timestamp).toLocaleTimeString();
+
+  // Kiểm tra xem device đã có trong bảng chưa
+  let row = document.getElementById(`${deviceId}-lat`);
+  if (!row) {
+    // Thêm device mới vào bảng
+    const gpsTable = document.getElementById("gpsDataTable");
+    const newRow = document.createElement("tr");
+    newRow.innerHTML = `
+                <td>${deviceName}</td>
+                <td id="${deviceId}-lat">${data.latitude.toFixed(6)}</td>
+                <td id="${deviceId}-lng">${data.longitude.toFixed(6)}</td>
+                <td id="${deviceId}-alt">${data.altitude}m</td>
+                <td id="${deviceId}-speed">${data.speed} km/h</td>
+                <td id="${deviceId}-time">${timestamp}</td>
+            `;
+    gpsTable.appendChild(newRow);
+
+    // Thêm marker cho bản đồ nếu chưa có
+    if (!markers[deviceId]) {
+      markers[deviceId] = L.marker([data.latitude, data.longitude], {
+        icon: L.divIcon({
+          className: "custom-div-icon",
+          html: '<div style="background-color: #007bff; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white;"></div>',
+          iconSize: [15, 15],
+          iconAnchor: [7, 7],
+        }),
+      })
+        .addTo(map)
+        .bindPopup(`${deviceName} (${deviceId})`);
+    }
+  } else {
+    // Cập nhật dữ liệu hiện có
+    document.getElementById(`${deviceId}-lat`).textContent =
+      data.latitude.toFixed(6);
+    document.getElementById(`${deviceId}-lng`).textContent =
+      data.longitude.toFixed(6);
+    document.getElementById(
+      `${deviceId}-alt`
+    ).textContent = `${data.altitude}m`;
+    document.getElementById(
+      `${deviceId}-speed`
+    ).textContent = `${data.speed} km/h`;
+    document.getElementById(`${deviceId}-time`).textContent = timestamp;
+  }
+
+  // Cập nhật marker trên bản đồ
+  if (markers[deviceId]) {
+    markers[deviceId].setLatLng([data.latitude, data.longitude]);
+    markers[deviceId]
+      .getPopup()
+      .setContent(
+        `${deviceName}<br>Độ cao: ${data.altitude}m<br>Tốc độ: ${data.speed} km/h`
+      );
+  }
+});
+
+// Xử lý WebRTC
+const startStreamButton = document.getElementById("startStream");
+const stopStreamButton = document.getElementById("stopStream");
+const streamStatus = document.getElementById("streamStatus");
+const captureButton = document.getElementById("captureImage");
+const fullscreenButton = document.getElementById("fullscreenBtn");
+
+let peerConnection;
+let currentVideoElement = null;
+
+// Khởi tạo kết nối WebRTC
+async function startWebRTC(deviceId) {
+  try {
+    console.log("startWebRTC called with deviceId:", deviceId);
+    streamStatus.textContent = "Đang kết nối...";
+    streamStatus.className = "badge bg-warning";
+
+    // Tạo peer connection
+    const configuration = {
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    };
+
+    peerConnection = new RTCPeerConnection(configuration);
+
+    // Xử lý khi nhận được ICE candidate
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("webrtc_ice_candidate", {
+          device_id: deviceId,
+          candidate: event.candidate,
+        });
+      }
+    };
+
+    // Xử lý khi nhận được track
+    peerConnection.ontrack = (event) => {
+      console.log("Received video track");
+
+      // Get the active video element from VideoLayoutManager
+      if (window.videoLayoutManager) {
+        const activeVideoElement =
+          window.videoLayoutManager.getActiveVideoElement();
+        if (activeVideoElement) {
+          activeVideoElement.srcObject = event.streams[0];
+          currentVideoElement = activeVideoElement;
+        } else {
+          console.warn("No active video element found");
+        }
+      } else {
+        console.warn("VideoLayoutManager not available");
+      }
+
+      streamStatus.textContent = "Đang phát";
+      streamStatus.className = "badge bg-success";
+    };
+
+    // Gửi yêu cầu bắt đầu stream đến server
+    console.log("Requesting stream start for device:", deviceId);
+    socket.emit("start_webrtc", {
+      device_id: deviceId,
+    });
+  } catch (error) {
+    console.error("Lỗi khi khởi tạo WebRTC:", error);
+    streamStatus.textContent = "Lỗi kết nối";
+    streamStatus.className = "badge bg-danger";
+  }
+}
+
+// Capture high-quality image directly from drone camera (independent of WebRTC)
+async function captureCurrentFrame() {
+  console.log("🎬 captureCurrentFrame() called");
+  try {
+    // Get device ID from current video source
+    const deviceId =
+      document
+        .getElementById("videoSourceDropdown")
+        .getAttribute("data-device-id") || "drone-camera";
+
+    console.log("📸 Device ID:", deviceId);
+    console.log("📸 Socket connected:", socket.connected);
+    console.log("📸 Sending capture request for device:", deviceId);
+
+    // Disable button while processing
+    captureButton.disabled = true;
+    const originalHTML = captureButton.innerHTML;
+    captureButton.innerHTML =
+      '<i class="fas fa-spinner fa-spin"></i> <span>Đang chụp...</span>';
+
+    // Update status
+    streamStatus.textContent = "Đang chụp...";
+    streamStatus.className = "badge bg-warning";
+
+    // Emit capture request via Socket.IO
+    socket.emit("capture_request", {
+      device_id: deviceId,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Re-enable button after 3 seconds
+    setTimeout(() => {
+      captureButton.disabled = false;
+      captureButton.innerHTML = originalHTML;
+    }, 3000);
+  } catch (err) {
+    console.error("❌ Capture error:", err);
+    captureButton.disabled = false;
+    streamStatus.textContent = "Lỗi chụp hình";
+    streamStatus.className = "badge bg-danger";
+  }
+}
+
+// Fallback method: capture from video element (lower quality)
+async function captureFromVideoElement() {
+  try {
+    let videoEl = currentVideoElement;
+    if (!videoEl && window.videoLayoutManager)
+      videoEl = window.videoLayoutManager.getActiveVideoElement();
+    if (!videoEl || !videoEl.srcObject) {
+      const anyVideo = document.querySelector("#videoGrid video");
+      if (!anyVideo || !anyVideo.srcObject) {
+        streamStatus.textContent = "Không có video";
+        streamStatus.className = "badge bg-danger";
+        return;
+      }
+      videoEl = anyVideo;
+    }
+
+    const width = videoEl.videoWidth || 640;
+    const height = videoEl.videoHeight || 480;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(videoEl, 0, 0, width, height);
+
+    canvas.toBlob(
+      async (blob) => {
+        if (!blob) return;
+        const form = new FormData();
+        const deviceId =
+          document
+            .getElementById("videoSourceDropdown")
+            .getAttribute("data-device-id") || "drone-camera";
+        form.append("image", blob, "capture.jpg");
+        form.append("device_id", deviceId);
+
+        try {
+          const resp = await fetch("/api/capture", {
+            method: "POST",
+            body: form,
+          });
+          if (resp.ok) {
+            streamStatus.textContent = "Ảnh đã lưu (fallback)";
+            streamStatus.className = "badge bg-success";
+          }
+        } catch (err) {
+          console.error("Fallback capture error:", err);
+        }
+      },
+      "image/jpeg",
+      0.95
+    );
+  } catch (err) {
+    console.error("Fallback capture error:", err);
+  }
+}
+
+// Toggle fullscreen on the video container
+function toggleFullscreen() {
+  const container = document.getElementById("videoContainer");
+  if (!container) return;
+  if (document.fullscreenElement) {
+    document
+      .exitFullscreen()
+      .catch((e) => console.warn("exitFullscreen failed", e));
+  } else {
+    container
+      .requestFullscreen?.()
+      .catch((e) => console.warn("requestFullscreen failed", e));
+  }
+}
+
+// Xử lý khi nhận được offer từ server (từ drone)
+socket.on("webrtc_offer", async function (data) {
+  try {
+    console.log("Received offer from drone:", data.device_id);
+
+    // Nếu chưa có peer connection hoặc đang kết nối với device khác, tạo mới
+    const currentDeviceId = document
+      .getElementById("videoSourceDropdown")
+      .getAttribute("data-device-id");
+    if (!peerConnection || data.device_id !== currentDeviceId) {
+      console.log(
+        "Offer not for current device or no peer connection, ignoring"
+      );
+      return;
+    }
+
+    // Kiểm tra signaling state
+    if (
+      peerConnection.signalingState !== "stable" &&
+      peerConnection.signalingState !== "have-local-offer"
+    ) {
+      console.log(
+        "PeerConnection not in correct state for offer, current state:",
+        peerConnection.signalingState
+      );
+      return;
+    }
+
+    const remoteDesc = new RTCSessionDescription({
+      sdp: data.sdp,
+      type: data.type,
+    });
+
+    await peerConnection.setRemoteDescription(remoteDesc);
+    console.log("Set remote description (offer) successfully");
+
+    // Tạo answer
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+
+    // Gửi answer về server
+    socket.emit("webrtc_answer", {
+      device_id: data.device_id,
+      sdp: peerConnection.localDescription.sdp,
+      type: peerConnection.localDescription.type,
+    });
+
+    console.log("Sent answer to server");
+  } catch (error) {
+    console.error("Lỗi khi xử lý offer:", error);
+  }
+});
+
+// Xử lý khi nhận được answer từ server (không nên xảy ra vì drone là offerer)
+socket.on("webrtc_answer", async function (data) {
+  console.log("Received unexpected answer - drone should be offerer, ignoring");
+});
+
+// Xử lý khi nhận được ICE candidate từ server
+socket.on("webrtc_ice_candidate", async function (data) {
+  if (!peerConnection) return;
+
+  try {
+    // data.candidate should be the ICE candidate object with candidate, sdpMid, sdpMLineIndex
+    if (data.candidate) {
+      await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+      console.log("Added ICE candidate from server");
+    }
+  } catch (error) {
+    console.error("Lỗi khi xử lý ICE candidate:", error);
+  }
+});
+
+// Sự kiện khi nhấn nút bắt đầu stream
+startStreamButton.addEventListener("click", function () {
+  const selectedDevice =
+    document
+      .getElementById("videoSourceDropdown")
+      .getAttribute("data-device-id") ||
+    document
+      .querySelector("#videoSourceList a[data-device-id]")
+      ?.getAttribute("data-device-id") ||
+    "Drone1";
+  console.log("Starting WebRTC for device:", selectedDevice);
+  startWebRTC(selectedDevice);
+  startStreamButton.disabled = true;
+  stopStreamButton.disabled = false;
+});
+
+// Sự kiện khi nhấn nút dừng stream
+stopStreamButton.addEventListener("click", function () {
+  const deviceId =
+    document
+      .getElementById("videoSourceDropdown")
+      .getAttribute("data-device-id") ||
+    document
+      .querySelector("#videoSourceList a[data-device-id]")
+      ?.getAttribute("data-device-id") ||
+    "Drone1";
+  // Tell server/drone to stop streaming
+  console.log("Requesting stream stop for device:", deviceId);
+  socket.emit("stop_webrtc", { device_id: deviceId });
+
+  if (peerConnection) {
+    try {
+      peerConnection.close();
+    } catch (e) {
+      console.warn("close pc", e);
+    }
+    peerConnection = null;
+  }
+
+  if (currentVideoElement) {
+    currentVideoElement.srcObject = null;
+    currentVideoElement = null;
+  }
+
+  streamStatus.textContent = "Đã dừng";
+  streamStatus.className = "badge bg-secondary";
+  startStreamButton.disabled = false;
+  stopStreamButton.disabled = true;
+});
+
+// Capture button handler
+if (captureButton) {
+  console.log("✅ Found capture button:", captureButton);
+  captureButton.addEventListener("click", function (event) {
+    console.log("🔘 Capture button clicked! Event:", event);
+    alert("Capture button clicked!");
+    captureCurrentFrame();
+  });
+  console.log("✅ Capture button event listener registered");
+} else {
+  console.error("❌ Capture button not found! Searching for it...");
+  const allButtons = document.querySelectorAll("button");
+  console.log("All buttons on page:", allButtons);
+  allButtons.forEach((btn) => {
+    if (btn.id) console.log("Button ID:", btn.id);
+  });
+}
+
+// Fullscreen button handler
+fullscreenButton.addEventListener("click", function () {
+  toggleFullscreen();
+});
+
+// Xử lý khi chọn nguồn video
+// Handle video layout switching
+document.addEventListener("click", function (e) {
+  if (e.target.closest("#viewLayoutList a")) {
+    e.preventDefault();
+    const layout = e.target.closest("a").dataset.layout;
+    if (window.videoLayoutManager) {
+      window.videoLayoutManager.switchLayout(layout);
+
+      // Update active state in dropdown
+      document.querySelectorAll("#viewLayoutList a").forEach((a) => {
+        a.classList.remove("active");
+      });
+      e.target.closest("a").classList.add("active");
+    }
+  } else if (e.target.matches("#videoSourceList a")) {
+    e.preventDefault();
+    const deviceId = e.target.getAttribute("data-device-id");
+    const deviceName = e.target.textContent;
+    const dropdown = document.getElementById("videoSourceDropdown");
+    dropdown.textContent = deviceName;
+    dropdown.setAttribute("data-device-id", deviceId);
+
+    // Dừng stream hiện tại nếu có
+    if (peerConnection) {
+      peerConnection.close();
+      peerConnection = null;
+      if (currentVideoElement) {
+        currentVideoElement.srcObject = null;
+        currentVideoElement = null;
+      }
+    }
+
+    // Bắt đầu stream mới
+    startWebRTC(deviceId);
+  }
+});
+
+// Xử lý khi thiết bị được thêm mới
+socket.on("video_device_added", function (data) {
+  console.log("Thiết bị video mới:", data);
+
+  const deviceId = data.device_id;
+  const deviceName =
+    data.device_name || deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
+
+  // Thêm vào dropdown video source
+  const videoSourceList = document.getElementById("videoSourceList");
+  let existingItem = videoSourceList.querySelector(
+    `[data-device-id="${deviceId}"]`
+  );
+
+  if (!existingItem) {
+    const listItem = document.createElement("li");
+    listItem.innerHTML = `<a class="dropdown-item" href="#" data-device-id="${deviceId}">${deviceName}</a>`;
+    videoSourceList.appendChild(listItem);
+
+    // Nếu là device đầu tiên, set làm mặc định
+    const dropdown = document.getElementById("videoSourceDropdown");
+    if (!dropdown.getAttribute("data-device-id")) {
+      dropdown.textContent = deviceName;
+      dropdown.setAttribute("data-device-id", deviceId);
+    }
+  }
+
+  // Thêm vào bảng GPS nếu chưa có
+  let gpsRow = document.getElementById(`${deviceId}-lat`);
+  if (!gpsRow) {
+    const gpsTable = document.getElementById("gpsDataTable");
+    const newRow = document.createElement("tr");
+    newRow.innerHTML = `
+                <td>${deviceName}</td>
+                <td id="${deviceId}-lat">--</td>
+                <td id="${deviceId}-lng">--</td>
+                <td id="${deviceId}-alt">--</td>
+                <td id="${deviceId}-speed">--</td>
+                <td id="${deviceId}-time">--</td>
+            `;
+    gpsTable.appendChild(newRow);
+  }
+
+  // Thêm marker cho bản đồ nếu chưa có
+  if (!markers[deviceId]) {
+    markers[deviceId] = L.marker([21.0285, 105.8542], {
+      icon: L.divIcon({
+        className: "custom-div-icon",
+        html: '<div style="background-color: #007bff; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white;"></div>',
+        iconSize: [15, 15],
+        iconAnchor: [7, 7],
+      }),
+    })
+      .addTo(map)
+      .bindPopup(`${deviceName} (${deviceId})`);
+  }
+});
+
+// Listen for capture success
+socket.on("capture_success", function (data) {
+  console.log("✅ Capture success:", data);
+
+  // Update status
+  streamStatus.textContent = "Chụp hình thành công!";
+  streamStatus.className = "badge bg-success";
+
+  // Show notification
+  if (window.Notification && Notification.permission === "granted") {
+    new Notification("Chụp hình thành công", {
+      body: `Capture ID: ${data.capture_id}\nĐang phân tích AI...`,
+      icon: "/static/images/camera-icon.png",
+    });
+  }
+
+  // Reset status after 3 seconds
+  setTimeout(() => {
+    streamStatus.textContent = "Ready";
+    streamStatus.className = "badge bg-success";
+  }, 3000);
+});
+
+// Listen for capture error
+socket.on("capture_error", function (data) {
+  console.error("❌ Capture error:", data);
+
+  // Update status
+  streamStatus.textContent = "Lỗi: " + data.error;
+  streamStatus.className = "badge bg-danger";
+
+  // Re-enable button
+  captureButton.disabled = false;
+  captureButton.innerHTML =
+    '<i class="fas fa-camera"></i> <span>Capture</span>';
+
+  // Reset status after 5 seconds
+  setTimeout(() => {
+    streamStatus.textContent = "Ready";
+    streamStatus.className = "badge bg-success";
+  }, 5000);
+});
+
+// Listen for AI analysis complete
+socket.on("capture_analyzed", function (data) {
+  console.log("🤖 AI Analysis complete:", data);
+
+  // Update status
+  streamStatus.textContent = "Phân tích hoàn tất!";
+  streamStatus.className = "badge bg-info";
+
+  // Update person counts with analyzed data
+  if (data.person_count !== undefined) {
+    document.getElementById("totalPersonCount").textContent =
+      data.person_count || 0;
+  }
+  if (data.earth_person_count !== undefined) {
+    document.getElementById("earthPersonCount").textContent =
+      data.earth_person_count || 0;
+  }
+  if (data.sea_person_count !== undefined) {
+    document.getElementById("seaPersonCount").textContent =
+      data.sea_person_count || 0;
+  }
+
+  // Show notification with analyzed image
+  if (window.Notification && Notification.permission === "granted") {
+    new Notification("Phân tích AI hoàn tất", {
+      body: `Tổng: ${data.person_count || 0} người\nĐất: ${
+        data.earth_person_count || 0
+      }, Biển: ${data.sea_person_count || 0}`,
+      icon: "/static/images/ai-icon.png",
+    });
+  }
+
+  // Optional: Display analyzed image in a modal or side panel
+  if (data.analyzed_image_url) {
+    console.log("📸 Analyzed image URL:", data.analyzed_image_url);
+    // TODO: You can add code here to display the analyzed image
+    // Example: Open in modal, update thumbnail, etc.
+  }
+
+  // Reset status after 3 seconds
+  setTimeout(() => {
+    streamStatus.textContent = "Ready";
+    streamStatus.className = "badge bg-success";
+  }, 3000);
+});
