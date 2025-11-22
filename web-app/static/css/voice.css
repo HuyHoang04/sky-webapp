@@ -10,16 +10,15 @@
 }
 
 #voice-map {
-    max-height: 80vh;
+    height: 80vh;
     min-height: 400px;
-    height: 100%;
     border-radius: 8px;
 }
 
 .voice-sidebar {
     max-height: 80vh;
     min-height: 400px;
-    overflow-y: auto;
+    overflow-y: scroll;
 }
 
 .voice-card {
@@ -86,7 +85,7 @@
 /* Responsive Design for Mobile/Tablet */
 @media (max-width: 768px) {
     #voice-map {
-        max-height: 50vh;
+        height: 50vh;
         min-height: 300px;
     }
     
