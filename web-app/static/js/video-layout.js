@@ -14,6 +14,10 @@ class VideoLayoutManager {
         this.devices = new Set(); // Set to track all devices (mock + real)
         this.mockDevices = ['drone1', 'drone2']; // Mock devices to initialize
 
+        console.log('🎥 VideoLayoutManager constructor called');
+        console.log('🎥 Container:', this.container);
+        console.log('🎥 Grid:', this.grid);
+
         this.setupLayoutSwitcher();
         this.initializeDevices();
         this.setupSocketIO();
@@ -43,8 +47,8 @@ class VideoLayoutManager {
             // Fetch real devices from API
             await this.fetchRealDevices();
             
-            // Initialize WebRTC clients for all devices
-            await this.initializeWebRTCClients();
+            // NOTE: WebRTC clients are handled by dashboard.js, not here
+            // await this.initializeWebRTCClients();
             
         } catch (error) {
             console.error('Error initializing devices:', error);
@@ -63,6 +67,9 @@ class VideoLayoutManager {
         
         // Update layout options after adding mock devices
         this.updateLayoutOptions();
+        
+        // Set default single view layout
+        this.switchLayout('single');
     }
 
     async fetchRealDevices() {
@@ -406,18 +413,29 @@ class VideoLayoutManager {
     }
 
     getActiveVideoElement() {
+        console.log('🎥 getActiveVideoElement called');
+        
         // Get the currently active video element
         const activeCell = this.grid.querySelector('.video-cell.active');
+        console.log('🎥 Active cell:', activeCell);
+        
         if (activeCell) {
-            return activeCell.querySelector('video');
+            const video = activeCell.querySelector('video');
+            console.log('🎥 Video element in active cell:', video);
+            return video;
         }
         
         // If no active cell, get the first video element
         const firstCell = this.grid.querySelector('.video-cell');
+        console.log('🎥 First cell:', firstCell);
+        
         if (firstCell) {
-            return firstCell.querySelector('video');
+            const video = firstCell.querySelector('video');
+            console.log('🎥 Video element in first cell:', video);
+            return video;
         }
         
+        console.warn('🎥 No video elements found!');
         return null;
     }
 

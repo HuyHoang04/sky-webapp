@@ -118,6 +118,11 @@ async def create_peer_connection():
     config = RTCConfiguration(
         iceServers=[
             RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+            RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
+            RTCIceServer(urls=["stun:stun2.l.google.com:19302"]),
+            RTCIceServer(urls=["stun:stun3.l.google.com:19302"]),
+            RTCIceServer(urls=["stun:stun4.l.google.com:19302"]),
+            # TURN server (may require credentials)
             RTCIceServer(urls=["turn:relay1.expressturn.com:3480"], username="000000002076929768", credential="glxmCqGZVm2WqKrB/EXZsf2SZGc="),
         ]
     )
@@ -144,7 +149,11 @@ async def create_peer_connection():
     @peer_connection.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
         state = peer_connection.iceConnectionState
-        logger.info(f"ICE connection state: {state}")
+        logger.info(f"🔗 ICE connection state: {state}")
+        
+        # Log gathering state for debugging
+        gathering_state = peer_connection.iceGatheringState
+        logger.info(f"🔍 ICE gathering state: {gathering_state}")
         
         # 💓 Start keepalive when ICE is connected
         if state == "connected" or state == "completed":
@@ -166,8 +175,11 @@ async def create_peer_connection():
                         logger.info("✅ AI detection worker thread restarted")
                 else:
                     logger.warning("⚠️ Video track has no detection thread!")
-        elif state == "failed" or state == "disconnected":
-            logger.warning(f"ICE connection {state} - stopping keepalive")
+        elif state == "failed":
+            logger.error("❌ ICE connection FAILED - Check network/firewall settings")
+            await stop_keepalive()
+        elif state == "disconnected":
+            logger.warning("⚠️ ICE connection DISCONNECTED - May reconnect automatically")
             await stop_keepalive()
     
     # Log ICE gathering state changes
@@ -179,7 +191,14 @@ async def create_peer_connection():
     @peer_connection.on("icecandidate")
     async def on_icecandidate(candidate):
         if candidate:
-            logger.debug(f"Generated local ICE candidate: {candidate.candidate}")
+            candidate_type = "unknown"
+            if candidate.candidate:
+                parts = candidate.candidate.split()
+                if len(parts) > 7:
+                    candidate_type = parts[7]
+            logger.info(f"🧊 Generated ICE candidate: {candidate_type} - {candidate.candidate}")
+        else:
+            logger.info("🧊 ICE candidate gathering completed")
     
     # Add video track if webcam is available
     if webcam:

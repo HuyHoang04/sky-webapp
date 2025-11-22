@@ -128,6 +128,9 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
     async def recv(self):
         self.counter += 1
 
+        # Log every 30 frames to check if video is streaming
+        if self.counter % 30 == 0:
+            logger.info(f"🎬 VideoStreamTrack.recv() called #{self.counter} times")
 
         # Limit frame rate
         now = time.time()
@@ -142,6 +145,10 @@ class ObjectDetectionStreamTrack(VideoStreamTrack):
             frame = None
             if hasattr(self.camera, 'get_frame'):
                 frame = self.camera.get_frame()
+                if frame is None:
+                    logger.warning("⚠️ Camera returned None frame")
+                else:
+                    logger.debug(f"📸 Got frame from camera: shape={frame.shape}")
             else:
                 # Fallback to legacy API (capture_array)
                 frame = self.camera.capture_array()
