@@ -6,9 +6,10 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
 <style>
     #map {
-        height: 400px;
+        height: 100%;
         width: 100%;
-        border-radius: 5px;
+        border-radius: 0;
+        min-height: 450px;
     }
     .video-container {
         position: relative;
@@ -22,19 +23,6 @@
         width: 100%;
         height: 100%;
         object-fit: contain;  /* Maintain aspect ratio for 720p */
-    }
-    .device-status {
-        padding: 10px;
-        border-radius: 5px;
-        margin-bottom: 10px;
-    }
-    .device-online {
-        background-color: rgba(40, 167, 69, 0.2);
-        border: 1px solid #28a745;
-    }
-    .device-offline {
-        background-color: rgba(220, 53, 69, 0.2);
-        border: 1px solid #dc3545;
     }
     .data-card {
         background-color: #2c3034;
@@ -51,6 +39,191 @@
         50% { transform: scale(1.2); }
         100% { transform: scale(1); }
     }
+    
+    /* Detection stats overlay */
+    .detection-overlay {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        border-radius: 10px;
+        padding: 15px;
+        min-width: 200px;
+        z-index: 10;
+    }
+    
+    .detection-stats-compact {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+    }
+    
+    .detection-stat-item {
+        text-align: center;
+        color: white;
+    }
+    
+    .detection-stat-item i {
+        font-size: 1.2rem;
+        margin-bottom: 5px;
+    }
+    
+    .detection-stat-item .count {
+        font-size: 1.5rem;
+        font-weight: bold;
+        display: block;
+    }
+    
+    .detection-stat-item .label {
+        font-size: 0.7rem;
+        opacity: 0.8;
+    }
+    
+    /* Circular video control buttons */
+    .video-controls {
+        position: absolute;
+        bottom: 15px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 10px 15px;
+        border-radius: 25px;
+    }
+    
+    .video-controls .btn {
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: none;
+    }
+    
+    .video-controls .btn span {
+        display: none;
+    }
+    
+    .video-controls .dropdown-toggle {
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+    }
+    
+    .video-controls .dropdown-toggle::after {
+        display: none;
+    }
+    
+    /* Analysis & Capture Controls */
+    .analysis-controls-wrapper {
+        position: absolute;
+        bottom: 15px;
+        right: 15px;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 10px 15px;
+        border-radius: 25px;
+    }
+    
+    .analysis-controls {
+        display: flex;
+        flex-direction: row;
+        gap: 8px;
+        align-items: center;
+    }
+    
+    .analysis-controls .btn {
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: none;
+    }
+    
+    /* Map overlay controls */
+    .map-overlay {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        z-index: 1000;
+    }
+    
+    .map-control-group {
+        display: flex;
+        gap: 5px;
+    }
+    
+    .map-control-group .btn {
+        border-radius: 50%;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        font-size: 0.8rem;
+    }
+    
+    .map-control-group .form-check {
+        margin: 0;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 6px 8px;
+        border-radius: 6px;
+    }
+    
+    .map-control-group .form-check-input {
+        margin: 0;
+        width: 14px;
+        height: 14px;
+    }
+    
+    .map-control-group .form-check-label {
+        font-size: 0.75rem;
+        margin-left: 4px;
+        cursor: pointer;
+    }
+    
+    /* Map wrapper styling */
+    .map-wrapper {
+        background-color: #2c3034;
+        border: 1px solid #495057;
+        border-radius: 5px;
+        overflow: hidden;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .map-header {
+        background-color: #343a40;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #495057;
+    }
+    
+    .map-header h5 {
+        margin: 0;
+        color: white;
+        font-size: 1.1rem;
+    }
+    
+    .map-container {
+        position: relative;
+        flex: 1;
+        min-height: 450px;
+    }
 </style>
 {% endblock %}
 
@@ -64,12 +237,6 @@
                     <p class="text-muted mb-0">Real-time monitoring and control system</p>
                 </div>
                 <div class="d-flex gap-3">
-                    <button class="btn btn-danger" id="btnEmergencyRecord" onclick="triggerEmergencyRecording()">
-                        <i class="fas fa-microphone me-2"></i>Emergency Recording
-                    </button>
-                    <button class="btn btn-outline-light">
-                        <i class="fas fa-sync-alt me-2"></i>Refresh Data
-                    </button>
                     <button class="btn btn-primary">
                         <i class="fas fa-plus me-2"></i>New Mission
                     </button>
@@ -100,78 +267,63 @@
                 </div>
                 <div class="card-body p-0">
                     <div class="video-container" id="videoContainer">
+                        <!-- Detection Stats Overlay -->
+                        <div class="detection-overlay">
+                            <div class="detection-stats-compact">
+                                <div class="detection-stat-item">
+                                    <i class="fas fa-male text-success"></i>
+                                    <span class="count text-success" id="earthPersonCount">0</span>
+                                    <div class="label">Đất liền</div>
+                                </div>
+                                <div class="detection-stat-item">
+                                    <i class="fas fa-swimmer text-warning"></i>
+                                    <span class="count text-warning" id="seaPersonCount">0</span>
+                                    <div class="label">Biển</div>
+                                </div>
+                                <div class="detection-stat-item">
+                                    <i class="fas fa-users text-info"></i>
+                                    <span class="count text-info" id="totalPersonCount">0</span>
+                                    <div class="label">Tổng số</div>
+                                </div>
+                            </div>
+                        </div>
+                        
                         <div class="video-grid" id="videoGrid">
                             <!-- Video cells will be dynamically created by VideoLayoutManager -->
                         </div>
                         <div class="video-controls">
-                            <div class="d-flex gap-2">
-                                <button id="startStream" class="btn btn-primary btn-sm">
-                                    <i class="fas fa-play"></i>
-                                    <span>Start Stream</span>
+                            <button id="startStream" class="btn btn-success" title="Start Stream">
+                                <i class="fas fa-play"></i>
+                            </button>
+                            <button id="stopStream" class="btn btn-danger" title="Stop Stream">
+                                <i class="fas fa-stop"></i>
+                            </button>
+                            <div class="dropdown">
+                                <button class="btn btn-secondary dropdown-toggle" type="button" id="viewLayoutDropdown" data-bs-toggle="dropdown" title="Layout Options">
+                                    <i class="fas fa-th-large"></i>
                                 </button>
-                                <button id="stopStream" class="btn btn-outline-danger btn-sm">
-                                    <i class="fas fa-stop"></i>
-                                    <span>Stop</span>
+                                <ul class="dropdown-menu dropdown-menu-dark" id="viewLayoutList">
+                                    <li><a class="dropdown-item active" href="#" data-layout="single"><i class="fas fa-square me-2"></i>Single View</a></li>
+                                    <li><a class="dropdown-item" href="#" data-layout="grid"><i class="fas fa-th me-2"></i>Grid View</a></li>
+                                    <!-- Dynamic device-specific layout options will be added here -->
+                                </ul>
+                            </div>
+                            <button id="fullscreenBtn" class="btn btn-light" title="Fullscreen">
+                                <i class="fas fa-expand"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- Analysis & Capture Controls -->
+                        <div class="analysis-controls-wrapper">
+                            <div class="analysis-controls">
+                                <button class="btn btn-info position-relative" id="btnEmergencyRecord" onclick="triggerEmergencyRecording()" title="AI Emergency Recording">
+                                    <i class="fas fa-microphone"></i>
+                                    <span class="badge bg-warning text-dark position-absolute top-0 start-100 translate-middle">AI</span>
                                 </button>
-                                <button id="captureImage" class="btn btn-outline-light btn-sm">
+                                <button id="captureImage" class="btn btn-primary position-relative" title="AI Capture Image">
                                     <i class="fas fa-camera"></i>
-                                    <span>Capture</span>
+                                    <span class="badge bg-warning text-dark position-absolute top-0 start-100 translate-middle">AI</span>
                                 </button>
-                                <div class="dropdown">
-                                    <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button" id="viewLayoutDropdown" data-bs-toggle="dropdown">
-                                        <i class="fas fa-th-large me-1"></i>
-                                        <span>Layout</span>
-                                    </button>
-                                    <ul class="dropdown-menu dropdown-menu-dark" id="viewLayoutList">
-                                        <li><a class="dropdown-item active" href="#" data-layout="single"><i class="fas fa-square me-2"></i>Single View</a></li>
-                                        <li><a class="dropdown-item" href="#" data-layout="grid"><i class="fas fa-th me-2"></i>Grid View</a></li>
-                                        <!-- Dynamic device-specific layout options will be added here -->
-                                    </ul>
-                                </div>
-                            </div>
-                            <div class="d-flex gap-3 align-items-center">
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-clock me-2"></i>
-                                    <span id="flightTime">00:15:32</span>
-                                </div>
-                                <button id="fullscreenBtn" class="btn btn-outline-light btn-sm">
-                                    <i class="fas fa-expand"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Detection Stats Card - Below Video -->
-            <div class="card mt-3">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="fas fa-users me-2"></i>Thống kê phát hiện</h5>
-                    <button class="btn btn-sm btn-outline-info" onclick="testDetectionUpdate()">
-                        <i class="fas fa-flask"></i> Test Update
-                    </button>
-                </div>
-                <div class="card-body">
-                    <div class="row text-center">
-                        <div class="col-md-4">
-                            <div class="p-3 border border-success rounded">
-                                <i class="fas fa-male fa-2x text-success mb-2"></i>
-                                <h6>Người trên đất</h6>
-                                <h3 class="text-success" id="earthPersonCount">0</h3>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="p-3 border border-warning rounded">
-                                <i class="fas fa-swimmer fa-2x text-warning mb-2"></i>
-                                <h6>Người trên biển</h6>
-                                <h3 class="text-warning" id="seaPersonCount">0</h3>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="p-3 border border-info rounded">
-                                <i class="fas fa-users fa-2x text-info mb-2"></i>
-                                <h6>Tổng số người</h6>
-                                <h3 class="text-info" id="totalPersonCount">0</h3>
                             </div>
                         </div>
                     </div>
@@ -181,15 +333,12 @@
         
         <!-- GPS Map Panel -->
         <div class="col-lg-4 mb-4">
-            <div class="card h-100">
-                <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-map-marker-alt"></i> Flight Tracking</h5>
-                    </div>
+            <div class="map-wrapper">
+                <div class="map-header">
+                    <h5><i class="fas fa-map-marker-alt"></i> Flight Tracking</h5>
                 </div>
-                <div class="card-body p-0">
-                    <div class="map-container">
-                        <div id="map"></div>
+                <div class="map-container">
+                    <div id="map"></div>
                         <div class="map-overlay">
                             <div class="map-control-group">
                                 <button class="btn btn-dark btn-sm" onclick="centerMap()">
@@ -207,47 +356,13 @@
                                     <i class="fas fa-minus"></i>
                                 </button>
                             </div>
-                        </div>
-                        <div class="map-stats">
-                            <div class="map-stat-item">
-                                <i class="fas fa-arrows-alt-v"></i>
-                                <div>
-                                    <div class="small text-muted">Altitude</div>
-                                    <strong>120m</strong>
-                                </div>
-                            </div>
-                            <div class="map-stat-item">
-                                <i class="fas fa-tachometer-alt"></i>
-                                <div>
-                                    <div class="small text-muted">Speed</div>
-                                    <strong>15 m/s</strong>
-                                </div>
-                            </div>
-                            <div class="map-stat-item">
-                                <i class="fas fa-compass"></i>
-                                <div>
-                                    <div class="small text-muted">Heading</div>
-                                    <strong>45°</strong>
-                                </div>
-                            </div>
-                            <div class="map-stat-item">
-                                <i class="fas fa-wind"></i>
-                                <div>
-                                    <div class="small text-muted">Wind Speed</div>
-                                    <strong>5 m/s</strong>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                        <div class="mt-3">
-                            <div class="form-check form-switch d-flex justify-content-between align-items-center">
-                                <div>
-                                    <input class="form-check-input me-2" type="checkbox" id="showDrone" checked>
-                                    <label class="form-check-label" for="showDrone">
-                                        <i class="fas fa-drone me-1"></i>Show Drone
+                            <div class="map-control-group">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="showDrone" checked>
+                                    <label class="form-check-label text-white small" for="showDrone">
+                                        <i class="fas fa-drone me-1"></i>Drone
                                     </label>
                                 </div>
-                                <small class="text-success">Active</small>
                             </div>
                         </div>
                     </div>
@@ -257,59 +372,8 @@
     </div>
     
     <div class="row">
-        <!-- Device Status Panel -->
-        <div class="col-lg-4 mb-4">
-            <div class="card">
-                <div class="card-header">
-                    <h5><i class="fas fa-server"></i> Device Status</h5>
-                </div>
-                <div class="card-body">
-                    <div id="deviceStatusList">
-                        <div class="device-status device-online">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-drone me-2 text-primary"></i>
-                                    <div>
-                                        <h6 class="mb-0">Drone 1</h6>
-                                        <small class="text-muted">DJI Mavic 3</small>
-                                    </div>
-                                </div>
-                                <span class="badge bg-success">Online</span>
-                            </div>
-                            <div class="p-2 rounded bg-dark mb-2">
-                                <small class="text-muted d-block">Signal Strength</small>
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-signal text-primary me-2"></i>
-                                    <strong>Excellent</strong>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="device-status device-online mt-4">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-drone me-2 text-primary"></i>
-                                    <div>
-                                        <h6 class="mb-0">Drone 2</h6>
-                                        <small class="text-muted">DJI Air 3</small>
-                                    </div>
-                                </div>
-                                <span class="badge bg-success">Online</span>
-                            </div>
-                            <div class="p-2 rounded bg-dark mb-2">
-                                <small class="text-muted d-block">Signal Strength</small>
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-signal text-warning me-2"></i>
-                                    <strong>Good</strong>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
         <!-- GPS Data Panel -->
-        <div class="col-lg-8 mb-4">
+        <div class="col-lg-12 mb-4">
             <div class="card">
                 <div class="card-header">
                     <div class="d-flex justify-content-between align-items-center">
