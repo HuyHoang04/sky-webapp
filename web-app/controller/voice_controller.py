@@ -8,6 +8,7 @@ from services.voice_service import VoiceRecordService
 import logging
 import threading
 import os
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -371,4 +372,32 @@ def ai_analysis_callback():
         return jsonify({
             'status': 'error',
             'message': str(e)
+        }), 500
+
+@voice_blueprint.route('/api/voice/trigger-recording', methods=['POST'])
+def trigger_recording():
+    """
+    Trigger emergency recording via Socket.IO
+    Sends event to record system (Raspberry Pi)
+    """
+    try:
+        from socket_instance import socketio
+        
+        # Emit socket event to record device
+        logger.info("[VOICE] Triggering recording via Socket.IO")
+        socketio.emit('trigger_recording', {
+            'timestamp': time.time(),
+            'source': 'web_dashboard'
+        })
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Recording trigger sent to device'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"[VOICE] Error triggering recording: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Error: {str(e)}'
         }), 500

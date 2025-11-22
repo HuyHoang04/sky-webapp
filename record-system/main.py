@@ -11,7 +11,9 @@ import atexit
 import fcntl
 import cloudinary
 import cloudinary.uploader
-import requests 
+import requests
+import socketio
+import threading
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -26,7 +28,7 @@ HELP_SOUND = "/home/pi/Documents/Drone2025/music/Help_me.wav"
 SAVE_DIR = "/home/pi/Documents/Drone2025/mic_help"
 COUNTER_FILE = os.path.join(SAVE_DIR, "counter.txt")
 PULSE_SERVER = "/run/user/1000/pulse/native"
-MIC_DEVICE = "plughw:1,0"
+MIC_DEVICE = "plughw:2,0"
 
 # Cloudinary
 CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
@@ -56,10 +58,21 @@ if not WEB_APP_URL.startswith(("http://", "https://")):
 DEVICE_ID = os.environ.get("DEVICE_ID", "rescue_mic_01")  # Device identifier (configurable)
 print(f"[CONFIG] Device ID: {DEVICE_ID}")
 
+# Web App Socket.IO URL
+WEB_APP_SOCKET_URL = "https://kanisha-unannexable-laraine.ngrok-free.dev/"
+print(f"[CONFIG] Web App Socket URL: {WEB_APP_SOCKET_URL}")
+
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+# Socket.IO client
+sio = socketio.Client()
+
+# Global flag for web trigger
+web_trigger_flag = False
+web_trigger_lock = threading.Lock()
 
 def cleanup_resources():
     """Clean up GPIO and other resources before exit"""
@@ -258,32 +271,86 @@ def upload_to_cloudinary(mp3_path):
         print(f"[UPLOAD] Upload failed: {e}")
         return None
 
+def process_recording():
+    """Xử lý ghi âm - function chung cho cả GPIO và web trigger"""
+    print("[TRIGGER] Recording triggered — playing Help_me.wav then recording...")
+
+    # Phát âm thanh Help_me
+    play_sound()
+
+    # Ghi âm + tăng âm lượng
+    wav_file = record_audio()
+
+    # Chuyển sang MP3
+    mp3_file = convert_to_mp3(wav_file)
+
+    # Upload lên Cloudinary và lấy URL
+    cloudinary_url = None
+    if mp3_file:
+        cloudinary_url = upload_to_cloudinary(mp3_file)
+        
+    # 🚀 Gửi URL + GPS tới Web App (Web App sẽ trigger AI service)
+    if cloudinary_url:
+        send_to_web_app(cloudinary_url)
+
+    print("[TRIGGER] Returning to standby mode...\n")
+
+# ----------------- SOCKET.IO EVENT HANDLERS -----------------
+@sio.on('connect')
+def on_connect():
+    print("[SOCKET] Connected to Web App")
+    sio.emit('register_record_device', {'device_id': DEVICE_ID})
+
+@sio.on('disconnect')
+def on_disconnect():
+    print("[SOCKET] Disconnected from Web App")
+
+@sio.on('trigger_recording')
+def on_trigger_recording(data):
+    """Nhận lệnh trigger recording từ web"""
+    global web_trigger_flag
+    
+    print(f"[SOCKET] Received trigger_recording event: {data}")
+    
+    with web_trigger_lock:
+        if web_trigger_flag:
+            print("[SOCKET] Recording already in progress, ignoring trigger")
+            return
+        web_trigger_flag = True
+        print("[SOCKET] Web trigger flag set to True")
+
+# Connect to Web App Socket.IO server
+def connect_to_web_app():
+    """Kết nối đến Web App Socket.IO server"""
+    try:
+        print(f"[SOCKET] Connecting to {WEB_APP_SOCKET_URL}...")
+        sio.connect(WEB_APP_SOCKET_URL)
+        print("[SOCKET] Connection initiated")
+    except Exception as e:
+        print(f"[SOCKET] Failed to connect: {e}")
+        print("[SOCKET] Will retry in background...")
+
+# Start Socket.IO connection in background
+connection_thread = threading.Thread(target=connect_to_web_app, daemon=True)
+connection_thread.start()
+
 # ----------------- VÒNG LẶP CHÍNH -----------------
 try:
     while True:
-        if GPIO.input(BUTTON_PIN) == GPIO.LOW:  # Nhấn nút
-            print("[BUTTON] Button pressed — playing Help_me.wav then recording...")
-
-            # Phát âm thanh Help_me
-            play_sound()
-
-            # Ghi âm + tăng âm lượng
-            wav_file = record_audio()
-
-            # Chuyển sang MP3
-            mp3_file = convert_to_mp3(wav_file)
-
-            # Upload lên Cloudinary và lấy URL
-            cloudinary_url = None
-            if mp3_file:
-                cloudinary_url = upload_to_cloudinary(mp3_file)
-                
-            # 🚀 Gửi URL + GPS tới Web App (Web App sẽ trigger AI service)
-            if cloudinary_url:
-                send_to_web_app(cloudinary_url)
-
-            print("[BUTTON] Returning to standby mode...\n")
-            sleep(1) 
+        # Kiểm tra nút GPIO vật lý
+        if GPIO.input(BUTTON_PIN) == GPIO.LOW:
+            print("[BUTTON] Physical button pressed")
+            process_recording()
+            sleep(1)
+        
+        # Kiểm tra web trigger từ Socket.IO
+        with web_trigger_lock:
+            if web_trigger_flag:
+                print("[WEB] Web trigger activated")
+                web_trigger_flag = False  # Reset flag
+                process_recording()
+                sleep(1)
+        
         sleep(0.05)
 
 except KeyboardInterrupt:

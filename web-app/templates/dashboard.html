@@ -64,6 +64,9 @@
                     <p class="text-muted mb-0">Real-time monitoring and control system</p>
                 </div>
                 <div class="d-flex gap-3">
+                    <button class="btn btn-danger" id="btnEmergencyRecord" onclick="triggerEmergencyRecording()">
+                        <i class="fas fa-microphone me-2"></i>Emergency Recording
+                    </button>
                     <button class="btn btn-outline-light">
                         <i class="fas fa-sync-alt me-2"></i>Refresh Data
                     </button>
@@ -1087,6 +1090,39 @@
             streamStatus.className = 'badge bg-success';
         }, 5000);
     });
+    
+    // Trigger emergency recording
+    function triggerEmergencyRecording() {
+        const button = document.getElementById('btnEmergencyRecord');
+        if (!button) return;
+        
+        button.disabled = true;
+        const originalHTML = button.innerHTML;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Recording...';
+        
+        fetch('/api/voice/trigger-recording', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                alert('✅ Emergency recording triggered! Check Voice Records in ~20 seconds.');
+            } else {
+                alert('❌ ' + (data.message || 'Failed to trigger recording'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('❌ Network error');
+        })
+        .finally(() => {
+            setTimeout(() => {
+                button.disabled = false;
+                button.innerHTML = originalHTML;
+            }, 3000);
+        });
+    }
     
     // Listen for AI analysis complete
     socket.on('capture_analyzed', function(data) {
