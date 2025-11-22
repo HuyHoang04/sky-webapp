@@ -239,15 +239,15 @@ class WebRTCClient {
      * Tạo peer connection mới
      */
     async createPeerConnection() {
-        // Tạo peer connection với nhiều STUN servers để tăng khả năng kết nối
+        // Chỉ dùng TURN server để đảm bảo kết nối ổn định
         this.peerConnection = new RTCPeerConnection({
             iceServers: [
-                {'urls': 'stun:stun.l.google.com:19302'}, 
                 {'urls': 'turn:relay1.expressturn.com:3480', 'username': '000000002076929768', 'credential': 'glxmCqGZVm2WqKrB/EXZsf2SZGc='}  
             ],
             iceCandidatePoolSize: 10,
             bundlePolicy: 'max-bundle',
-            rtcpMuxPolicy: 'require'
+            rtcpMuxPolicy: 'require',
+            iceTransportPolicy: 'relay' // Force TURN relay only
         });
         
         // Thiết lập các event handlers cho peer connection
@@ -263,29 +263,62 @@ class WebRTCClient {
         // Xử lý khi nhận được track từ drone
         this.peerConnection.ontrack = (event) => {
             if (event.streams && event.streams[0]) {
-                console.log('Đã nhận video track từ drone');
+                this._log('INFO', '🎬 Received video track from drone', {
+                    streamId: event.streams[0].id,
+                    trackCount: event.streams[0].getTracks().length
+                });
+                
                 // Ensure the element is muted to allow autoplay in modern browsers
                 try {
                     this.videoElement.muted = true;
                     this.videoElement.setAttribute('muted', '');
+                    this.videoElement.setAttribute('playsinline', '');
+                    this.videoElement.setAttribute('autoplay', '');
                 } catch (e) {
-                    // ignore
+                    this._log('WARN', 'Could not set video attributes', { error: e.message });
                 }
 
+                // Set srcObject
                 this.videoElement.srcObject = event.streams[0];
 
                 // Debug: log track info
                 try {
                     const tracks = event.streams[0].getVideoTracks();
-                    console.log(`Stream video tracks count: ${tracks.length}`);
-                    tracks.forEach((t, i) => console.log(`Track[${i}]: id=${t.id}, kind=${t.kind}`));
+                    this._log('INFO', `📹 Stream video tracks count: ${tracks.length}`);
+                    tracks.forEach((t, i) => {
+                        this._log('INFO', `Track[${i}]: id=${t.id}, kind=${t.kind}, enabled=${t.enabled}, muted=${t.muted}, readyState=${t.readyState}`);
+                    });
                 } catch (e) {
-                    console.debug('Could not enumerate tracks:', e);
+                    this._log('ERROR', 'Could not enumerate tracks', { error: e.message });
                 }
 
                 // Attach playback event handlers for debugging
+                this.videoElement.onloadstart = () => this._log('INFO', '📺 Video loadstart event');
+                this.videoElement.onloadedmetadata = () => {
+                    this._log('INFO', '📺 Video metadata loaded', {
+                        videoWidth: this.videoElement.videoWidth,
+                        videoHeight: this.videoElement.videoHeight,
+                        duration: this.videoElement.duration
+                    });
+                    
+                    // Force play when metadata is loaded
+                    this.videoElement.play().then(() => {
+                        this._log('INFO', '✅ Video play() succeeded');
+                    }).catch(e => {
+                        this._log('ERROR', '❌ Video play() failed', { error: e.message });
+                        // Try to play again after user interaction
+                        this.videoElement.onclick = () => {
+                            this.videoElement.play().catch(err => {
+                                this._log('ERROR', 'Play on click failed', { error: err.message });
+                            });
+                        };
+                    });
+                };
+                
+                this.videoElement.onloadeddata = () => this._log('INFO', '📺 Video data loaded');
+                this.videoElement.oncanplay = () => this._log('INFO', '📺 Video can play');
                 this.videoElement.onplaying = () => {
-                    console.log('Video element playing');
+                    this._log('INFO', '✅ Video element playing');
                     // Confirm connection only when playback truly starts
                     this.connectedConfirmed = true;
                     this.isConnected = true;
@@ -293,22 +326,22 @@ class WebRTCClient {
                     // Clear only the timer for this attempt
                     this.clearConnectionTimeout();
                 };
-                this.videoElement.onpause = () => console.log('Video element paused');
-                this.videoElement.onerror = (ev) => console.error('Video element error', ev);
-
-                // Try to play when metadata is loaded; set muted before play to avoid NotAllowedError
-                this.videoElement.onloadedmetadata = () => {
-                    // Some browsers still block autoplay; ensure we try to play but catch errors
-                    this.videoElement.play().then(() => {
-                        console.log('play() succeeded');
-                    }).catch(e => {
-                        console.warn('Không thể tự động phát video:', e);
+                this.videoElement.onpause = () => this._log('WARN', '⏸️ Video element paused');
+                this.videoElement.onstalled = () => this._log('WARN', '⚠️ Video stalled');
+                this.videoElement.onwaiting = () => this._log('WARN', '⏳ Video waiting for data');
+                this.videoElement.onerror = (ev) => {
+                    const error = this.videoElement.error;
+                    this._log('ERROR', '❌ Video element error', {
+                        code: error?.code,
+                        message: error?.message,
+                        event: ev
                     });
                 };
 
                 // Make video element visually obvious during debugging
                 try {
                     this.videoElement.style.border = '2px solid lime';
+                    this.videoElement.style.backgroundColor = '#000';
                 } catch (e) {}
                 
                 this.statusCallback('track_received');
@@ -317,6 +350,10 @@ class WebRTCClient {
                 // Keep basic state updated here
                 this.isConnected = true;
                 this.reconnectAttempts = 0;
+            } else {
+                this._log('WARN', '⚠️ Received ontrack event but no streams', {
+                    streams: event.streams
+                });
             }
         };
         
@@ -386,10 +423,13 @@ class WebRTCClient {
             if (iceState === 'connected' || iceState === 'completed') {
                 this._log('INFO', '✅ ICE Connection established', { state: iceState });
             } else if (iceState === 'checking') {
-                this._log('INFO', '🔍 ICE checking candidates...');
+                this._log('INFO', '🔍 ICE checking candidates...', {
+                    candidatePairCount: 'checking'
+                });
             } else if (iceState === 'disconnected') {
                 this._log('WARN', '⚠️ ICE disconnected', {
-                    willReconnect: !this.reconnecting
+                    willReconnect: !this.reconnecting,
+                    possibleCause: 'Network issue or firewall blocking'
                 });
                 // Chỉ trigger reconnect nếu chưa đang reconnect
                 if (!this.reconnecting) {
@@ -397,7 +437,8 @@ class WebRTCClient {
                 }
             } else if (iceState === 'failed') {
                 this._log('ERROR', '❌ ICE connection failed', {
-                    willReconnect: !this.reconnecting
+                    willReconnect: !this.reconnecting,
+                    possibleCause: 'TURN server required or network unreachable'
                 });
                 // Thử kết nối lại nếu ICE connection thất bại
                 if (!this.reconnecting) {
@@ -416,15 +457,22 @@ class WebRTCClient {
         this.peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
                 const candidateStr = event.candidate.candidate.substring(0, 50);
+                
+                // Log candidate type for debugging
+                const candidateType = event.candidate.candidate.includes('typ host') ? 'host' :
+                                    event.candidate.candidate.includes('typ srflx') ? 'srflx' :
+                                    event.candidate.candidate.includes('typ relay') ? 'relay' : 'unknown';
+                
                 // Gửi ICE candidate đến server để chuyển đến drone
                 this.socket.emit('webrtc_ice_candidate', {
                     device_id: this.deviceId,
                     candidate: event.candidate
                 });
-                this._log('INFO', '📤 Sent ICE candidate to drone', {
+                this._log('INFO', `📤 Sent ICE candidate to drone (${candidateType})`, {
                     candidate: candidateStr,
                     type: event.candidate.type,
-                    protocol: event.candidate.protocol
+                    protocol: event.candidate.protocol,
+                    candidateType: candidateType
                 });
             } else {
                 this._log('INFO', '✅ ICE gathering complete (null candidate)');

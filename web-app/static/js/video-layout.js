@@ -113,9 +113,11 @@ class VideoLayoutManager {
         const deviceId = data.device_id;
         const deviceName = data.device_name || deviceId.charAt(0).toUpperCase() + deviceId.slice(1);
         
+        console.log(`📱 New device registered: ${deviceId} (${deviceName})`);
+        
         // Prevent duplicates
         if (this.devices.has(deviceId)) {
-            console.log(`Device ${deviceId} already exists, skipping...`);
+            console.log(`ℹ️ Device ${deviceId} already exists, skipping...`);
             return;
         }
         
@@ -127,7 +129,14 @@ class VideoLayoutManager {
         this.updateLayoutOptions();
         
         // Initialize WebRTC client for new device
+        console.log(`🔄 Initializing WebRTC for new device: ${deviceId}`);
         this.initializeWebRTCClient(deviceId);
+        
+        // Request drone to start streaming
+        if (window.socket) {
+            console.log(`📤 Requesting ${deviceId} to start WebRTC streaming`);
+            window.socket.emit('start_webrtc', { device_id: deviceId });
+        }
     }
 
     handleDeviceRemoval(data) {
@@ -150,6 +159,13 @@ class VideoLayoutManager {
     }
 
     createVideoCell(deviceId, deviceName) {
+        // Check if video cell already exists
+        const existingCell = this.grid.querySelector(`[data-drone="${deviceId}"]`);
+        if (existingCell) {
+            console.log(`Video cell for ${deviceId} already exists`);
+            return;
+        }
+        
         const videoCell = document.createElement('div');
         videoCell.className = 'video-cell';
         videoCell.setAttribute('data-drone', deviceId);
@@ -158,7 +174,7 @@ class VideoLayoutManager {
         const videoId = `videoStream${deviceId.replace(/\D/g, '') || '1'}`;
         
         videoCell.innerHTML = `
-            <video id="${videoId}" autoplay playsinline muted></video>
+            <video id="${videoId}" autoplay playsinline muted style="background-color: #000;"></video>
             <div class="video-stats">
                 <div>
                     <i class="fas fa-signal"></i>
@@ -169,6 +185,8 @@ class VideoLayoutManager {
         `;
         
         this.grid.appendChild(videoCell);
+        
+        console.log(`✅ Created video cell for device: ${deviceId} with video ID: ${videoId}`);
     }
 
     removeVideoCell(deviceId) {
@@ -312,21 +330,31 @@ class VideoLayoutManager {
 
     async initializeWebRTCClient(deviceId) {
         try {
+            console.log(`🚀 Initializing WebRTC client for device: ${deviceId}`);
+            
             // Find the video element for this device
             const videoCell = this.grid.querySelector(`[data-drone="${deviceId}"]`);
             if (!videoCell) {
-                console.warn(`Video cell for device ${deviceId} not found`);
+                console.warn(`❌ Video cell for device ${deviceId} not found`);
                 return;
             }
 
             const videoElement = videoCell.querySelector('video');
             if (!videoElement) {
-                console.warn(`Video element for device ${deviceId} not found`);
+                console.warn(`❌ Video element for device ${deviceId} not found`);
                 return;
             }
+            
+            console.log(`✅ Found video element:`, {
+                id: videoElement.id,
+                hasAutoplay: videoElement.hasAttribute('autoplay'),
+                hasMuted: videoElement.hasAttribute('muted'),
+                hasPlaysinline: videoElement.hasAttribute('playsinline')
+            });
 
             // Create WebRTC client if not already exists
             if (!this.webrtcClients.has(deviceId)) {
+                console.log(`📡 Creating new WebRTC client for ${deviceId}`);
                 const client = new WebRTCClient(
                     deviceId,
                     videoElement,
@@ -335,10 +363,16 @@ class VideoLayoutManager {
                 );
                 
                 this.webrtcClients.set(deviceId, client);
+                
+                // Start connection
+                console.log(`▶️ Starting WebRTC connection for ${deviceId}`);
                 await client.start();
+                console.log(`✅ WebRTC client started for ${deviceId}`);
+            } else {
+                console.log(`ℹ️ WebRTC client already exists for ${deviceId}`);
             }
         } catch (error) {
-            console.error(`Error initializing WebRTC client for ${deviceId}:`, error);
+            console.error(`❌ Error initializing WebRTC client for ${deviceId}:`, error);
         }
     }
 
