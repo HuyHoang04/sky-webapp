@@ -99,6 +99,7 @@ detection_task = None
 latest_gps = None
 webrtc_restart_count = 0
 last_restart_time = 0
+webrtc_connecting = False
 
 # 💓 ICE Keepalive
 keepalive_task = None
@@ -125,10 +126,15 @@ async def create_peer_connection():
     # Log connection state changes
     @peer_connection.on("connectionstatechange")
     async def on_connectionstatechange():
+        global webrtc_connecting
         state = peer_connection.connectionState
         logger.info(f"PeerConnection state: {state}")
         
-        if state == "failed" or state == "closed":
+        if state == "connected":
+            webrtc_connecting = False
+            logger.info("WebRTC connection established successfully")
+        elif state == "failed" or state == "closed":
+            webrtc_connecting = False
             # Connection failed, try to restart
             logger.warning("WebRTC connection failed or closed, will attempt to restart")
             await asyncio.sleep(1)
@@ -354,7 +360,12 @@ async def stop_keepalive():
 
 async def restart_webrtc():
     """Restart the WebRTC connection with retry limit"""
-    global webrtc_restart_count, last_restart_time, pending_remote_ice
+    global webrtc_restart_count, last_restart_time, pending_remote_ice, webrtc_connecting
+    
+    # Check if already connecting
+    if webrtc_connecting:
+        logger.info("WebRTC connection already in progress, ignoring restart request")
+        return
     
     # Stop keepalive during restart
     await stop_keepalive()
@@ -372,6 +383,7 @@ async def restart_webrtc():
         webrtc_restart_count = 0
     
     last_restart_time = now
+    webrtc_connecting = True
     logger.info(f"🔄 Restarting WebRTC connection (attempt #{webrtc_restart_count + 1})")
     
     try:
@@ -389,6 +401,7 @@ async def restart_webrtc():
             'type': offer['type']
         })
     except Exception as e:
+        webrtc_connecting = False
         logger.error(f"Failed to restart WebRTC: {e}")
 
 
@@ -803,6 +816,7 @@ async def webrtc_answer(data):
             answer = RTCSessionDescription(sdp=data['sdp'], type=data['type'])
             await peer_connection.setRemoteDescription(answer)
             logger.info("WebRTC answer received and set successfully")
+            webrtc_connecting = False  # Connection process completed
             # After setting remote description, add any buffered ICE candidates
             global pending_remote_ice
             if pending_remote_ice:
@@ -864,6 +878,7 @@ async def webrtc_answer(data):
         msg = str(e)
         if 'Cannot handle answer in signaling state' in msg or 'in signaling state "stable"' in msg:
             logger.warning(f"Ignoring answer due to signaling state race: {e}")
+            webrtc_connecting = False  # Connection already established
             return
         logger.error(f"Error setting remote description: {e}")
         # Try to recover by restarting WebRTC

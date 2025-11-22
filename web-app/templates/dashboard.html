@@ -752,6 +752,14 @@
     async function startWebRTC(deviceId) {
         try {
             console.log('startWebRTC called with deviceId:', deviceId);
+            
+            // Check if we already have an active connection
+            if (peerConnection && peerConnection.connectionState !== 'closed' && peerConnection.connectionState !== 'failed') {
+                console.log('WebRTC connection already exists, closing it first');
+                peerConnection.close();
+                peerConnection = null;
+            }
+            
             streamStatus.textContent = 'Đang kết nối...';
             streamStatus.className = 'badge bg-warning';
             
@@ -763,6 +771,22 @@
             };
             
             peerConnection = new RTCPeerConnection(configuration);
+            
+            // Monitor connection state
+            peerConnection.onconnectionstatechange = () => {
+                console.log('PeerConnection state:', peerConnection.connectionState);
+                if (peerConnection.connectionState === 'connected') {
+                    startStreamButton.disabled = true;
+                    stopStreamButton.disabled = false;
+                    streamStatus.textContent = 'Đang phát';
+                    streamStatus.className = 'badge bg-success';
+                } else if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
+                    startStreamButton.disabled = false;
+                    stopStreamButton.disabled = true;
+                    streamStatus.textContent = 'Ngắt kết nối';
+                    streamStatus.className = 'badge bg-danger';
+                }
+            };
             
             // Xử lý khi nhận được ICE candidate
             peerConnection.onicecandidate = event => {
@@ -801,10 +825,23 @@
                 device_id: deviceId
             });
             
+            // Set a timeout to re-enable buttons if connection doesn't establish
+            setTimeout(() => {
+                if (peerConnection && peerConnection.connectionState !== 'connected') {
+                    console.log('WebRTC connection timeout, re-enabling buttons');
+                    startStreamButton.disabled = false;
+                    stopStreamButton.disabled = true;
+                    streamStatus.textContent = 'Timeout';
+                    streamStatus.className = 'badge bg-warning';
+                }
+            }, 30000); // 30 second timeout
+            
         } catch (error) {
             console.error('Lỗi khi khởi tạo WebRTC:', error);
             streamStatus.textContent = 'Lỗi kết nối';
             streamStatus.className = 'badge bg-danger';
+            startStreamButton.disabled = false;
+            stopStreamButton.disabled = true;
         }
     }
 
@@ -969,6 +1006,12 @@
     
     // Sự kiện khi nhấn nút bắt đầu stream
     startStreamButton.addEventListener('click', function() {
+        // Check if already connecting or connected
+        if (peerConnection && peerConnection.connectionState !== 'closed' && peerConnection.connectionState !== 'failed') {
+            console.log('WebRTC already active, ignoring start request');
+            return;
+        }
+        
         const selectedDevice = document.getElementById('videoSourceDropdown').getAttribute('data-device-id') || (document.querySelector('#videoSourceList a[data-device-id]')?.getAttribute('data-device-id')) || 'Drone1';
         console.log('Starting WebRTC for device:', selectedDevice);
         startWebRTC(selectedDevice);
