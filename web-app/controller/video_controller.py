@@ -33,12 +33,12 @@ def handle_webrtc_offer(data):
     Xử lý WebRTC offer từ drone client
     """
     device_id = data['device_id']
-    logger.info(f"[WEBRTC] Received webrtc_offer from drone: {device_id}")
-    logger.debug(f"[WEBRTC] Offer SDP type: {data.get('type')}")
+    logger.info(f"[WEBRTC] 📩 Received webrtc_offer from drone: {device_id}")
+    logger.debug(f"[WEBRTC] Offer SDP type: {data.get('type')}, length: {len(data.get('sdp', ''))}")
     
     # Forward offer đến tất cả clients frontend
     emit('webrtc_offer', data, broadcast=True, skip_sid=request.sid)
-    logger.info(f"[WEBRTC] Forwarded offer from drone {device_id} to frontend clients")
+    logger.info(f"[WEBRTC] 📤 Forwarded offer from drone {device_id} to frontend clients")
 
 
 @socketio.on('webrtc_answer')
@@ -47,12 +47,12 @@ def handle_webrtc_answer(data):
     Xử lý answer từ frontend
     """
     device_id = data['device_id']
-    logger.info(f"[WEBRTC] Received webrtc_answer from frontend for drone: {device_id}")
-    logger.debug(f"[WEBRTC] Answer SDP type: {data.get('type')}")
+    logger.info(f"[WEBRTC] 📩 Received webrtc_answer from frontend for drone: {device_id}")
+    logger.debug(f"[WEBRTC] Answer SDP type: {data.get('type')}, length: {len(data.get('sdp', ''))}")
     
     # Forward answer đến drone
     emit('webrtc_answer', data, broadcast=True, skip_sid=request.sid)
-    logger.info(f"[WEBRTC] Forwarded answer to drone: {device_id}")
+    logger.info(f"[WEBRTC] 📤 Forwarded answer to drone: {device_id}")
 
 @socketio.on('start_webrtc')
 def handle_start_webrtc(data):
@@ -83,12 +83,13 @@ def handle_webrtc_ice_candidate(data):
     Xử lý ICE candidate từ drone hoặc frontend
     """
     device_id = data['device_id']
-    logger.info(f"[WEBRTC] Received ICE candidate for device: {device_id}")
-    logger.debug(f"[WEBRTC] ICE candidate: {data.get('candidate', {}).get('candidate', 'N/A')[:50]}...")
+    candidate_str = str(data.get('candidate', {}).get('candidate', 'N/A'))[:50]
+    logger.info(f"[WEBRTC] 🧊 Received ICE candidate for device: {device_id}")
+    logger.debug(f"[WEBRTC] ICE candidate: {candidate_str}...")
     
     # Forward ICE candidate đến các clients khác
     emit('webrtc_ice_candidate', data, broadcast=True, skip_sid=request.sid)
-    logger.info(f"[WEBRTC] Forwarded ICE candidate for device: {device_id}")
+    logger.debug(f"[WEBRTC] 📤 Forwarded ICE candidate for device: {device_id}")
 
 @socketio.on('webrtc_status')
 def handle_webrtc_status(data):

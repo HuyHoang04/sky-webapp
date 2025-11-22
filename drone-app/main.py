@@ -100,6 +100,10 @@ latest_gps = None
 webrtc_restart_count = 0
 last_restart_time = 0
 
+# 💓 ICE Keepalive
+keepalive_task = None
+stats_monitor_task = None
+
 
 async def create_peer_connection():
     """Create a new RTCPeerConnection with proper event handlers"""
@@ -138,23 +142,29 @@ async def create_peer_connection():
         state = peer_connection.iceConnectionState
         logger.info(f"ICE connection state: {state}")
         
-        # ✅ Ensure AI detection starts AFTER ICE connection is established
-        if state == "connected" and video_track:
-            logger.info("🎯 ICE CONNECTED - AI detection should now be processing frames")
-            # Log detection worker status
-            if hasattr(video_track, 'detection_thread') and video_track.detection_thread:
-                is_alive = video_track.detection_thread.is_alive()
-                logger.info(f"🤖 AI detection worker thread status: {'RUNNING ✅' if is_alive else 'STOPPED ❌'}")
-                if not is_alive:
-                    logger.error("⚠️ AI detection worker thread is NOT running! Restarting...")
-                    # Restart detection thread
-                    video_track.detection_thread = threading.Thread(target=video_track._detection_worker, daemon=True)
-                    video_track.detection_thread.start()
-                    logger.info("✅ AI detection worker thread restarted")
-            else:
-                logger.warning("⚠️ Video track has no detection thread!")
+        # 💓 Start keepalive when ICE is connected
+        if state == "connected" or state == "completed":
+            logger.info("🎯 ICE CONNECTED - Starting keepalive mechanism")
+            await start_keepalive()
+            
+            # Ensure AI detection starts AFTER ICE connection is established
+            if video_track:
+                logger.info("🎯 ICE CONNECTED - AI detection should now be processing frames")
+                # Log detection worker status
+                if hasattr(video_track, 'detection_thread') and video_track.detection_thread:
+                    is_alive = video_track.detection_thread.is_alive()
+                    logger.info(f"🤖 AI detection worker thread status: {'RUNNING ✅' if is_alive else 'STOPPED ❌'}")
+                    if not is_alive:
+                        logger.error("⚠️ AI detection worker thread is NOT running! Restarting...")
+                        # Restart detection thread
+                        video_track.detection_thread = threading.Thread(target=video_track._detection_worker, daemon=True)
+                        video_track.detection_thread.start()
+                        logger.info("✅ AI detection worker thread restarted")
+                else:
+                    logger.warning("⚠️ Video track has no detection thread!")
         elif state == "failed" or state == "disconnected":
-            logger.warning(f"ICE connection {state} - detection may stop")
+            logger.warning(f"ICE connection {state} - stopping keepalive")
+            await stop_keepalive()
     
     # Log ICE gathering state changes
     @peer_connection.on("icegatheringstatechange")
@@ -239,9 +249,117 @@ async def create_offer():
     }
 
 
+async def start_keepalive():
+    """💓 Start ICE keepalive mechanism"""
+    global keepalive_task, stats_monitor_task
+    
+    # Stop existing tasks
+    await stop_keepalive()
+    
+    logger.info("💓 Starting ICE keepalive mechanism")
+    
+    # Keepalive ping task
+    async def keepalive_ping():
+        while running and peer_connection:
+            try:
+                if peer_connection.connectionState != "connected":
+                    logger.debug("💓 Keepalive stopped - connection not active")
+                    break
+                
+                ice_state = peer_connection.iceConnectionState
+                logger.info(f"💓 Keepalive ping - ICE: {ice_state}, RTC: {peer_connection.connectionState}")
+                
+                # Check if ICE connection is unhealthy
+                if ice_state in ["disconnected", "failed"]:
+                    logger.warning(f"💓 Keepalive detected ICE issue: {ice_state}")
+                    
+            except Exception as e:
+                logger.error(f"💓 Keepalive ping error: {e}")
+                break
+            
+            await asyncio.sleep(5)  # Ping every 5 seconds
+    
+    # Stats monitoring task
+    async def stats_monitor():
+        last_bytes_sent = 0
+        last_packets_sent = 0
+        last_check_time = time.time()
+        
+        while running and peer_connection:
+            try:
+                if peer_connection.connectionState != "connected":
+                    logger.debug("📊 Stats monitor stopped - connection not active")
+                    break
+                
+                # Get stats
+                stats = await peer_connection.getStats()
+                bytes_sent = 0
+                packets_sent = 0
+                packets_lost = 0
+                
+                for report in stats.values():
+                    if hasattr(report, 'type') and report.type == 'outbound-rtp':
+                        bytes_sent += getattr(report, 'bytesSent', 0)
+                        packets_sent += getattr(report, 'packetsSent', 0)
+                        packets_lost += getattr(report, 'packetsLost', 0)
+                
+                # Calculate deltas
+                bytes_delta = bytes_sent - last_bytes_sent
+                packets_delta = packets_sent - last_packets_sent
+                time_delta = time.time() - last_check_time
+                
+                if bytes_delta > 0 or packets_delta > 0:
+                    bitrate = (bytes_delta * 8) / time_delta / 1000  # kbps
+                    logger.info(f"📊 Stats - Sent: {bytes_delta} bytes, {packets_delta} packets, {bitrate:.1f} kbps, Lost: {packets_lost}")
+                else:
+                    logger.warning(f"⚠️ Stats - No data sent in last {time_delta:.1f}s")
+                
+                # Update last values
+                last_bytes_sent = bytes_sent
+                last_packets_sent = packets_sent
+                last_check_time = time.time()
+                
+            except Exception as e:
+                logger.error(f"📊 Stats monitor error: {e}")
+                break
+            
+            await asyncio.sleep(10)  # Check every 10 seconds
+    
+    # Start tasks
+    keepalive_task = asyncio.create_task(keepalive_ping())
+    stats_monitor_task = asyncio.create_task(stats_monitor())
+    logger.info("💓 Keepalive and stats monitoring started")
+
+
+async def stop_keepalive():
+    """💓 Stop ICE keepalive mechanism"""
+    global keepalive_task, stats_monitor_task
+    
+    if keepalive_task and not keepalive_task.done():
+        keepalive_task.cancel()
+        try:
+            await keepalive_task
+        except asyncio.CancelledError:
+            pass
+        keepalive_task = None
+        logger.info("💓 Keepalive stopped")
+    
+    if stats_monitor_task and not stats_monitor_task.done():
+        stats_monitor_task.cancel()
+        try:
+            await stats_monitor_task
+        except asyncio.CancelledError:
+            pass
+        stats_monitor_task = None
+        logger.info("📊 Stats monitoring stopped")
+
+
 async def restart_webrtc():
     """Restart the WebRTC connection with retry limit"""
     global webrtc_restart_count, last_restart_time, pending_remote_ice
+    
+    # Stop keepalive during restart
+    await stop_keepalive()
     
     # Rate limiting - don't restart too frequently
     now = time.time()
@@ -575,7 +693,7 @@ async def connect():
         """Read GPS from gps_utils.read_gps and update latest_gps while forwarding to server."""
         global latest_gps
         try:
-            async for gps in read_gps(serial_port="/dev/ttyAMA0", baudrate=9600):
+            async for gps in read_gps(serial_port="/dev/ttyAMA3", baudrate=9600):
                 latest_gps = gps
                 gps['device_id'] = device_id
                 gps['device_name'] = device_name
@@ -653,6 +771,10 @@ async def stop_webrtc(data):
             return
         
         user_stopped = True
+        
+        # Stop keepalive
+        await stop_keepalive()
+        
         if video_track:
             try:
                 video_track.stop()
@@ -978,6 +1100,9 @@ async def cleanup():
     global running, peer_connection, webcam, video_track
     
     running = False
+    
+    # Stop keepalive
+    await stop_keepalive()
     
     # Cancel tasks
     if gps_task and not gps_task.done():
