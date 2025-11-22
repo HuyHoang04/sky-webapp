@@ -48,7 +48,7 @@ logging.basicConfig(
 logger = logging.getLogger("drone-client")
 
 # Default configuration - Optimized for real-time streaming
-DEFAULT_SERVER_URL = "https://popular-catfish-slightly.ngrok-free.app"
+DEFAULT_SERVER_URL = "https://kanisha-unannexable-laraine.ngrok-free.dev"
 DEFAULT_DEVICE_ID = "drone-camera"  # Fixed device ID for easier debugging
 DEFAULT_DEVICE_NAME = "Drone Camera"
 
