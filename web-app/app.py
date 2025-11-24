@@ -1,3 +1,10 @@
+"""
+SkyAid Drone Surveillance System - Main Flask Application
+
+Copyright (c) 2025 HuyHoang04
+Licensed under MIT License - see LICENSE file for details
+"""
+
 from dotenv import load_dotenv
 import logging
 import os

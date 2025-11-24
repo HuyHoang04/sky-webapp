@@ -1,3 +1,7 @@
+# SkyAid Drone Surveillance System - Git Ignore Rules
+# Copyright (c) 2025 HuyHoang04
+# Licensed under MIT License - see LICENSE file for details
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

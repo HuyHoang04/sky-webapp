@@ -2,6 +2,9 @@
 """
 Drone App Client for Sky WebApp
 Streams video via WebRTC with object detection and sends GPS data via WebSocket
+
+Copyright (c) 2025 HuyHoang04
+Licensed under MIT License - see LICENSE file for details
 """
 
 import argparse
@@ -14,6 +17,7 @@ import uuid
 import threading
 from datetime import datetime
 import nest_asyncio
+import dotenv
 
 import cv2
 import numpy as np
@@ -35,9 +39,9 @@ import io
 import cloudinary
 import cloudinary.uploader
 
-CLOUD_NAME="de8dmh7iq"
-CLOUD_API_KEY="878738396278587"
-CLOUD_API_SECRET="TvLHcRpcWaA4Vl1zmjOl23lc9rY"
+CLOUD_NAME= dotenv.get_key("CLOUD_NAME")
+CLOUD_API_KEY= dotenv.get_key("CLOUD_API_KEY")
+CLOUD_API_SECRET= dotenv.get_key("CLOUD_API_SECRET")
 
 # Configure logging
 logging.basicConfig(

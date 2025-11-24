@@ -1,3 +1,11 @@
+"""
+SkyAid Voice Analytics Server
+Voice analysis and transcription service using Whisper and Phi-3
+
+Copyright (c) 2025 HuyHoang04
+Licensed under MIT License - see LICENSE file for details
+"""
+
 import uvicorn
 import torch
 import whisper

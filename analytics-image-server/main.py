@@ -1,3 +1,11 @@
+"""
+SkyAid Image Analytics Server
+AI-powered image analysis service using YOLO for object detection
+
+Copyright (c) 2025 HuyHoang04
+Licensed under MIT License - see LICENSE file for details
+"""
+
 import io
 import logging
 import time
@@ -5,16 +13,16 @@ import os
 from typing import Optional
 
 import cv2
+import dotenv
 import numpy as np
 import requests
 from fastapi import FastAPI, UploadFile, File, Form, Body
 from fastapi.responses import JSONResponse
 from ultralytics import YOLO
 import uvicorn
-from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
+dotenv.load_dotenv()
 
 # ============= CLOUDINARY =============
 import tempfile
@@ -31,9 +39,9 @@ except Exception:
 if _CLOUDINARY_AVAILABLE:
     try:
         cloudinary.config(
-            cloud_name="de8dmh7iq",
-            api_key="878738396278587",
-            api_secret="TvLHcRpcWaA4Vl1zmjOl23lc9rY",
+            cloud_name=dotenv.get_key("CLOUD_NAME"),
+            api_key=dotenv.get_key("CLOUD_API_KEY"),
+            api_secret=dotenv.get_key("CLOUD_API_SECRET"),
             secure=True,
         )
     except Exception:

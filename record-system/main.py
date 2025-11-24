@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""
+SkyAid Record System
+Audio recording and capture system with GPIO integration
+
+Copyright (c) 2025 HuyHoang04
+Licensed under MIT License - see LICENSE file for details
+"""
+
 import json
 import RPi.GPIO as GPIO
 import os

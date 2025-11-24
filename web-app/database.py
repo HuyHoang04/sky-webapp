@@ -1,6 +1,10 @@
 """
 Database configuration and session management for PostgreSQL/Supabase
+
+Copyright (c) 2025 HuyHoang04
+Licensed under MIT License - see LICENSE file for details
 """
+
 import os
 from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
