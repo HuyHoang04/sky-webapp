@@ -1,6 +1,7 @@
 # SkyAid Drone Surveillance System
 
 A comprehensive real-time drone surveillance and flood rescue system built with Python, Flask, and modern web technologies. The system enables live video streaming, GPS tracking, object detection, and voice analysis for effective flood rescue operations.
+Documentation: [[link-to-docs](https://docs.google.com/document/d/126QZxoa8y4uUbx0oIrZQdPZO8DCSqkS_b8DdJgEEp-g/edit?usp=sharing)]
 
 ## 🚀 Features
 
