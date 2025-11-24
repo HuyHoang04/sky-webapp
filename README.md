@@ -541,28 +541,6 @@ python test_detection.py
 # Load testing with multiple drones
 python load_test.py --drones 5 --duration 300
 ```
-
-## 🚀 Deployment
-
-### Docker Deployment
-```bash
-# Build all services
-docker-compose build
-
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-```
-
-### Production Deployment
-1. Configure production environment variables
-2. Set up reverse proxy (nginx)
-3. Configure SSL certificates
-4. Set up monitoring and logging
-5. Configure firewall and security
-
 ## 🤝 Contributing
 
 1. Fork the repository
@@ -579,28 +557,38 @@ docker-compose logs -f
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under a Proprietary License - see the [LICENSE](LICENSE) file for details.
 
 ```
-Copyright (c) 2025 HuyHoang04
+Copyright (c) 2025 HuyHoang04. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software and associated documentation files (the "Software") are proprietary
+and confidential. Unauthorized copying, modification, distribution, or use of
+this software is strictly prohibited.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Permission is granted solely to authorized users for personal or internal use
+only, subject to the following conditions:
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+1. This software may not be copied, modified, or distributed without explicit
+   written permission from the copyright holder.
+
+2. This software may not be used for commercial purposes without a valid
+   commercial license agreement.
+
+3. Any use of this software must include proper attribution to the original
+   author and copyright holder.
+
+4. Reverse engineering, decompilation, or disassembly of this software is
+   prohibited.
+
+5. This software is provided "AS IS" without warranty of any kind, express or
+   implied, including but not limited to the warranties of merchantability,
+   fitness for a particular purpose, and noninfringement.
+
+For licensing inquiries, please contact: [your-email@example.com]
+
+THE SOFTWARE IS PROVIDED UNDER STRICT LICENSE TERMS. VIOLATION OF THESE TERMS
+MAY RESULT IN LEGAL ACTION.
 ```
 
 ## 🙏 Acknowledgments
