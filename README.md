@@ -585,7 +585,7 @@ only, subject to the following conditions:
    implied, including but not limited to the warranties of merchantability,
    fitness for a particular purpose, and noninfringement.
 
-For licensing inquiries, please contact: [your-email@example.com]
+For licensing inquiries, please contact: [lahuyhoang03@gmail.com]
 
 THE SOFTWARE IS PROVIDED UNDER STRICT LICENSE TERMS. VIOLATION OF THESE TERMS
 MAY RESULT IN LEGAL ACTION.
